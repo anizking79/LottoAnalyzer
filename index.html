@@ -65,7 +65,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand">로또 분석기 V4</div>
+    <div class="brand">로또 분석기 V5</div>
     <span id="onlineState" class="badge">상태 확인중</span>
     <div class="grow"></div>
     <button id="installBtn" style="display:none">홈 화면에 설치</button>
@@ -150,7 +150,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
         <button id="backtestBtn">실행</button>
       </div>
       <div id="backtest" class="small" style="margin-top:10px">
-        각 회차 직전 데이터만 사용해 후보 5게임을 만들고 실제 결과와 비교합니다. 백테스트는 별도 계산 스레드에서 진행됩니다.
+        균형형·최근추세형·장기통계형·미출현형을 같은 과거 구간에서 모두 비교하고, 랜덤 5게임도 반복 시뮬레이션해 평균과 95% 범위를 계산합니다.
       </div>
     </section>
 
@@ -167,7 +167,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
 
 <script>
 const DATA_URL='https://smok95.github.io/lotto/results/all.json';
-const CACHE_KEY='lotto645_draws_v4';
+const CACHE_KEY='lotto645_draws_v5';
 let draws=[], model=null, deferredPrompt=null;
 
 window.addEventListener('beforeinstallprompt', e=>{
@@ -381,13 +381,14 @@ function makeBacktestWorker(){
   function std(a){let m=mean(a);return Math.sqrt(mean(a.map(x=>(x-m)*(x-m))))||1}
   function z(v,a){return (v-mean(a))/std(a)}
   function seeded(seed){let x=seed|0;return()=>((x=Math.imul(1664525,x)+1013904223|0)>>>0)/4294967296}
+  const MODES=['balanced','trend','long','overdue'];
   function modeWeights(mode){
     if(mode==='trend')return{all:.08,r20:.38,r50:.30,r100:.16,gap:.08};
     if(mode==='long')return{all:.42,r20:.08,r50:.12,r100:.23,gap:.15};
     if(mode==='overdue')return{all:.12,r20:.10,r50:.13,r100:.15,gap:.50};
     return{all:.20,r20:.25,r50:.22,r100:.18,gap:.15};
   }
-  function build(ds,mode){
+  function buildStats(ds){
     const N=ds.length,nums=Array.from({length:45},(_,i)=>i+1),freq={},gap={},pairs={};
     for(const n of nums)freq[n]=0;
     for(const d of ds)for(const n of d.numbers)freq[n]++;
@@ -395,13 +396,18 @@ function makeBacktestWorker(){
     const r20=rec(20),r50=rec(50),r100=rec(100);
     for(const n of nums){let g=N;for(let i=N-1;i>=0;i--){if(ds[i].numbers.includes(n)){g=N-1-i;break}}gap[n]=g}
     for(const d of ds){for(let i=0;i<6;i++)for(let j=i+1;j<6;j++){let a=d.numbers[i],b=d.numbers[j];if(a>b){const t=a;a=b;b=t}const k=a*46+b;pairs[k]=(pairs[k]||0)+1}}
-    const A={freq:nums.map(n=>freq[n]),r20:nums.map(n=>r20[n]),r50:nums.map(n=>r50[n]),r100:nums.map(n=>r100[n]),gap:nums.map(n=>gap[n])};
-    const w=modeWeights(mode),score=new Array(46).fill(0);
-    for(const n of nums)score[n]=w.all*z(freq[n],A.freq)+w.r20*z(r20[n],A.r20)+w.r50*z(r50[n],A.r50)+w.r100*z(r100[n],A.r100)+w.gap*z(gap[n],A.gap);
-    return{N,score,pairs,latest:new Set(ds[N-1].numbers)};
+    const arrays={freq:nums.map(n=>freq[n]),r20:nums.map(n=>r20[n]),r50:nums.map(n=>r50[n]),r100:nums.map(n=>r100[n]),gap:nums.map(n=>gap[n])};
+    const scoreByMode={};
+    for(const mode of MODES){
+      const w=modeWeights(mode),score=new Array(46).fill(0);
+      for(const n of nums)score[n]=w.all*z(freq[n],arrays.freq)+w.r20*z(r20[n],arrays.r20)+w.r50*z(r50[n],arrays.r50)+w.r100*z(r100[n],arrays.r100)+w.gap*z(gap[n],arrays.gap);
+      scoreByMode[mode]=score;
+    }
+    return{N,pairs,latest:new Set(ds[N-1].numbers),scoreByMode};
   }
-  function scoreCombo(c,m){
-    let s=0;for(const n of c)s+=m.score[n];s/=6;
+  function scoreCombo(c,m,mode){
+    const ns=m.scoreByMode[mode];
+    let s=0;for(const n of c)s+=ns[n];s/=6;
     let odd=0,low=0,sum=0,con=0,prev=0,ps=0;const ends=new Array(10).fill(0);
     for(let i=0;i<6;i++){const n=c[i];odd+=n&1;low+=n<=22;sum+=n;ends[n%10]++;if(m.latest.has(n))prev++;if(i&&c[i]-c[i-1]===1)con++}
     for(let i=0;i<6;i++)for(let j=i+1;j<6;j++)ps+=m.pairs[c[i]*46+c[j]]||0;
@@ -420,14 +426,16 @@ function makeBacktestWorker(){
     for(let k=0;k<6;k++){const i=Math.floor(rng()*p.length);a.push(p.splice(i,1)[0])}
     a.sort((x,y)=>x-y);return a;
   }
-  function topTickets(ds,mode,seed){
-    const m=build(ds,mode),rng=seeded(seed),cand=[],seen=new Set();
-    const samples=7000;
+  function candidatePool(stats,seed,samples){
+    const rng=seeded(seed),seen=new Set(),pool=[];
     for(let i=0;i<samples;i++){
       const c=randomCombo(rng),k=c.join(',');
-      if(seen.has(k))continue;seen.add(k);
-      cand.push({c,score:scoreCombo(c,m)});
+      if(seen.has(k))continue;seen.add(k);pool.push(c);
     }
+    return pool;
+  }
+  function topTicketsFromPool(pool,stats,mode){
+    const cand=pool.map(c=>({c,score:scoreCombo(c,stats,mode)}));
     cand.sort((a,b)=>b.score-a.score);
     const out=[];
     for(const x of cand){
@@ -446,22 +454,53 @@ function makeBacktestWorker(){
     for(const t of tickets){let c=0;for(const n of t.c)if(winning.includes(n))c++;if(c>best)best=c}
     return best;
   }
+  function quantile(a,q){
+    const s=[...a].sort((x,y)=>x-y);
+    const pos=(s.length-1)*q,lo=Math.floor(pos),hi=Math.ceil(pos);
+    if(lo===hi)return s[lo];
+    return s[lo]+(s[hi]-s[lo])*(pos-lo);
+  }
   onmessage=e=>{
-    const {draws,rounds,mode}=e.data;
+    const {draws,rounds,randomSeasons,samples}=e.data;
     const n=Math.min(rounds,draws.length-100),start=draws.length-n;
-    const H=[0,0,0,0,0,0,0],R=[0,0,0,0,0,0,0];
-    let hs=0,rs=0;
+    const results={};
+    for(const mode of MODES)results[mode]={hist:[0,0,0,0,0,0,0],sum:0};
+
+    const randomSeasonStats=Array.from({length:randomSeasons},()=>({hist:[0,0,0,0,0,0,0],sum:0}));
+
     for(let idx=start;idx<draws.length;idx++){
-      const target=draws[idx].numbers,train=draws.slice(0,idx);
-      const tickets=topTickets(train,mode,draws[idx].draw_no*3571);
-      const mm=maxMatch(tickets,target);H[mm]++;hs+=mm;
-      const rng=seeded(draws[idx].draw_no*811),rt=[];
-      for(let j=0;j<5;j++)rt.push({c:randomCombo(rng)});
-      const rm=maxMatch(rt,target);R[rm]++;rs+=rm;
+      const target=draws[idx].numbers,train=draws.slice(0,idx),stats=buildStats(train);
+      const pool=candidatePool(stats,draws[idx].draw_no*3571,samples);
+
+      for(const mode of MODES){
+        const tickets=topTicketsFromPool(pool,stats,mode);
+        const mm=maxMatch(tickets,target);
+        results[mode].hist[mm]++;results[mode].sum+=mm;
+      }
+
+      for(let s=0;s<randomSeasons;s++){
+        const rng=seeded((draws[idx].draw_no*1000003 + s*7919)>>>0),rt=[];
+        for(let j=0;j<5;j++)rt.push({c:randomCombo(rng)});
+        const rm=maxMatch(rt,target);
+        randomSeasonStats[s].hist[rm]++;randomSeasonStats[s].sum+=rm;
+      }
+
       const done=idx-start+1;
       postMessage({type:'progress',done,total:n,pct:Math.floor(done/n*100)});
     }
-    postMessage({type:'done',H,R,hs,rs,n});
+
+    const randomAvg=randomSeasonStats.map(x=>x.sum/n);
+    const random3=randomSeasonStats.map(x=>x.hist.slice(3).reduce((a,b)=>a+b,0));
+    const random4=randomSeasonStats.map(x=>x.hist.slice(4).reduce((a,b)=>a+b,0));
+    const random5=randomSeasonStats.map(x=>x.hist.slice(5).reduce((a,b)=>a+b,0));
+    const baseline={
+      avgMean:mean(randomAvg),avgLo:quantile(randomAvg,.025),avgHi:quantile(randomAvg,.975),
+      c3Mean:mean(random3),c3Lo:quantile(random3,.025),c3Hi:quantile(random3,.975),
+      c4Mean:mean(random4),c4Lo:quantile(random4,.025),c4Hi:quantile(random4,.975),
+      c5Mean:mean(random5),c5Lo:quantile(random5,.025),c5Hi:quantile(random5,.975)
+    };
+
+    postMessage({type:'done',results,baseline,n,randomSeasons});
   }`;
   return new Worker(URL.createObjectURL(new Blob([code],{type:'text/javascript'})));
 }
@@ -469,11 +508,9 @@ function makeBacktestWorker(){
 function runBacktest(){
   if(draws.length<120)return alert('백테스트에는 충분한 전체 데이터가 필요합니다.');
   const n=Math.min(+document.querySelector('#backRounds').value,draws.length-100);
-  const mode=document.querySelector('#mode').value;
-  const box=document.querySelector('#backtest');
-  const btn=document.querySelector('#backtestBtn');
+  const box=document.querySelector('#backtest'),btn=document.querySelector('#backtestBtn');
   btn.disabled=true;
-  box.innerHTML=`<div class="small">백테스트 준비중...</div><div class="progress" style="margin-top:8px"><i id="btBar" style="width:0%"></i></div><div class="small" id="btText" style="margin-top:7px">0 / ${n}</div>`;
+  box.innerHTML=`<div class="small">4개 모델 + 랜덤 반복 시뮬레이션 준비중...</div><div class="progress" style="margin-top:8px"><i id="btBar" style="width:0%"></i></div><div class="small" id="btText" style="margin-top:7px">0 / ${n}</div>`;
 
   const w=makeBacktestWorker();
   w.onmessage=ev=>{
@@ -483,23 +520,42 @@ function runBacktest(){
       if(bar)bar.style.width=d.pct+'%';
       if(t)t.textContent=`${d.done} / ${d.total} 회차 분석 · ${d.pct}%`;
     }else{
+      const names={balanced:'균형형',trend:'최근추세형',long:'장기통계형',overdue:'미출현형'};
       const ge=(a,k)=>a.slice(k).reduce((x,y)=>x+y,0);
-      box.innerHTML=`<table>
-        <tr><th></th><th>분석모델 5게임</th><th>랜덤 5게임</th></tr>
-        <tr><td>평균 최대일치</td><td>${(d.hs/d.n).toFixed(2)}개</td><td>${(d.rs/d.n).toFixed(2)}개</td></tr>
-        <tr><td>3개 이상</td><td>${ge(d.H,3)}/${d.n}</td><td>${ge(d.R,3)}/${d.n}</td></tr>
-        <tr><td>4개 이상</td><td>${ge(d.H,4)}/${d.n}</td><td>${ge(d.R,4)}/${d.n}</td></tr>
-        <tr><td>5개 이상</td><td>${ge(d.H,5)}/${d.n}</td><td>${ge(d.R,5)}/${d.n}</td></tr>
+      const rows=Object.entries(d.results).map(([mode,r])=>{
+        const avg=r.sum/d.n,c3=ge(r.hist,3),c4=ge(r.hist,4),c5=ge(r.hist,5);
+        const score=(avg-d.baseline.avgMean)/Math.max(.01,(d.baseline.avgHi-d.baseline.avgLo)/3.92);
+        return {mode,name:names[mode],avg,c3,c4,c5,score};
+      }).sort((a,b)=>b.score-a.score);
+
+      const b=d.baseline;
+      box.innerHTML=`
+      <div class="small" style="margin-bottom:8px">랜덤 기준: ${d.randomSeasons}회 반복 시뮬레이션 · 95% 범위 표시</div>
+      <table>
+        <tr><th>모델</th><th>평균 최대일치</th><th>3개+</th><th>4개+</th><th>5개+</th></tr>
+        ${rows.map((r,i)=>`<tr>
+          <td>${i===0?'★ ':''}${r.name}</td>
+          <td>${r.avg.toFixed(2)}</td><td>${r.c3}/${d.n}</td><td>${r.c4}/${d.n}</td><td>${r.c5}/${d.n}</td>
+        </tr>`).join('')}
+        <tr>
+          <td>랜덤 평균</td>
+          <td>${b.avgMean.toFixed(2)}<br><span class="small">${b.avgLo.toFixed(2)}~${b.avgHi.toFixed(2)}</span></td>
+          <td>${b.c3Mean.toFixed(1)}<br><span class="small">${b.c3Lo.toFixed(0)}~${b.c3Hi.toFixed(0)}</span></td>
+          <td>${b.c4Mean.toFixed(1)}<br><span class="small">${b.c4Lo.toFixed(0)}~${b.c4Hi.toFixed(0)}</span></td>
+          <td>${b.c5Mean.toFixed(1)}<br><span class="small">${b.c5Lo.toFixed(0)}~${b.c5Hi.toFixed(0)}</span></td>
+        </tr>
       </table>
-      <div class="small" style="margin-top:8px">※ 각 회차에서는 그 회차 이전 데이터만 사용했습니다. 추천 후보 생성에는 고정 시드 난수 탐색을 사용해 같은 버전에서는 재현 가능합니다.</div>`;
-      btn.disabled=false;log(`백테스트 완료: 최근 ${d.n}회 / ${mode}`);w.terminate();
+      <div class="small" style="margin-top:9px">
+        ★는 평균 최대일치 기준 현재 구간에서 가장 높은 모델입니다. 랜덤 95% 범위를 벗어나지 못하면 통계적으로 뚜렷한 우위라고 보기 어렵습니다.
+      </div>`;
+      btn.disabled=false;log(`V5 백테스트 완료: 최근 ${d.n}회 / 랜덤 ${d.randomSeasons}회 반복`);w.terminate();
     }
   };
   w.onerror=e=>{
     box.innerHTML=`<div class="small">백테스트 오류: ${e.message}</div>`;
     btn.disabled=false;log('백테스트 오류: '+e.message);w.terminate();
   };
-  w.postMessage({draws,rounds:n,mode});
+  w.postMessage({draws,rounds:n,randomSeasons:300,samples:5000});
 }
 
 document.querySelector('#loadBtn').onclick=loadRemote;document.querySelector('#mobileLoadBtn').onclick=loadRemote;
