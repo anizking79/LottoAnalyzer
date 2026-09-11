@@ -86,12 +86,45 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
 .group-mode-btn{min-height:38px;padding:8px 12px;background:#21262d;border:1px solid var(--line);border-radius:9px;color:var(--txt);font-weight:800;cursor:pointer}
 .group-mode-btn.active{background:#6e2bd9;border-color:#a371f7}
 #pManualGroup{min-height:38px;padding:8px 10px}
+
+#appLock{
+  position:fixed;inset:0;z-index:9999;background:
+  radial-gradient(circle at 50% 20%,rgba(31,111,235,.16),transparent 35%),#0d1117;
+  display:flex;align-items:center;justify-content:center;padding:20px
+}
+.lock-card{
+  width:min(420px,100%);background:#161b22;border:1px solid #30363d;border-radius:20px;
+  padding:28px;box-shadow:0 24px 70px rgba(0,0,0,.38)
+}
+.lock-logo{font-size:34px;text-align:center;margin-bottom:8px}
+.lock-title{font-size:23px;font-weight:900;text-align:center;margin-bottom:6px}
+.lock-sub{font-size:13px;color:#8b949e;text-align:center;line-height:1.55;margin-bottom:20px}
+.lock-row{display:flex;gap:8px}
+.lock-row input{flex:1;min-width:0}
+.lock-error{min-height:20px;margin-top:9px;font-size:12px;color:#f85149;text-align:center}
+.lock-note{margin-top:16px;font-size:11px;color:#8b949e;line-height:1.5;text-align:center}
+#appShell{visibility:hidden}
 </style>
 </head>
 <body>
+<div id="appLock">
+  <div class="lock-card">
+    <div class="lock-logo">🔐</div>
+    <div class="lock-title">복권 분석기 잠금</div>
+    <div class="lock-sub">비밀번호를 입력해야 앱을 사용할 수 있습니다.<br>브라우저를 닫으면 다시 인증해야 합니다.</div>
+    <div class="lock-row">
+      <input id="lockPassword" type="password" autocomplete="current-password" placeholder="비밀번호 입력">
+      <button id="unlockBtn" class="primary">열기</button>
+    </div>
+    <div id="lockError" class="lock-error"></div>
+    <div class="lock-note">이 잠금은 일반적인 접근 차단용입니다. GitHub Pages 특성상 서버 인증과 같은 수준의 보안은 아닙니다.</div>
+  </div>
+</div>
+<div id="appShell">
+
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand">복권 분석기 V6.3.3</div>
+    <div class="brand">복권 분석기 V6.4.3</div>
     <span id="onlineState" class="badge">상태 확인중</span>
     <div class="grow"></div>
     <button id="installBtn" style="display:none">홈 화면에 설치</button>
@@ -303,6 +336,56 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
 
 
 <script>
+const APP_PASSWORD_HASH='9b5688117bef1f8298d353233365d0c3d1a5b9e915e01450a000a929834cd64f';
+const AUTH_SESSION_KEY='lottery_analyzer_v6_4_auth';
+let authFailures=0;
+let authLockedUntil=0;
+
+async function sha256Hex(text){
+  const data=new TextEncoder().encode(text);
+  const digest=await crypto.subtle.digest('SHA-256',data);
+  return Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+function revealApp(){
+  document.querySelector('#appLock').style.display='none';
+  document.querySelector('#appShell').style.visibility='visible';
+  sessionStorage.setItem(AUTH_SESSION_KEY,'1');
+}
+
+async function tryUnlock(){
+  const now=Date.now();
+  const err=document.querySelector('#lockError');
+  if(now<authLockedUntil){
+    err.textContent=`잠시 후 다시 시도하세요. ${Math.ceil((authLockedUntil-now)/1000)}초`;
+    return;
+  }
+  const input=document.querySelector('#lockPassword');
+  const value=input.value;
+  if(!value){err.textContent='비밀번호를 입력하세요.';return;}
+  const hash=await sha256Hex(value);
+  if(hash===APP_PASSWORD_HASH){
+    authFailures=0;err.textContent='';revealApp();
+  }else{
+    authFailures++;
+    input.value='';
+    if(authFailures>=5){
+      authLockedUntil=Date.now()+30000;
+      authFailures=0;
+      err.textContent='입력 오류가 많아 30초 동안 잠깁니다.';
+    }else{
+      err.textContent=`비밀번호가 맞지 않습니다. (${authFailures}/5)`;
+    }
+  }
+}
+
+document.addEventListener('DOMContentLoaded',()=>{
+  document.querySelector('#unlockBtn').onclick=tryUnlock;
+  document.querySelector('#lockPassword').addEventListener('keydown',e=>{if(e.key==='Enter')tryUnlock()});
+  if(sessionStorage.getItem(AUTH_SESSION_KEY)==='1')revealApp();
+  else setTimeout(()=>document.querySelector('#lockPassword').focus(),50);
+});
+
 const DATA_URL='https://smok95.github.io/lotto/results/all.json';
 const CACHE_KEY='lotto645_draws_v5';
 let draws=[], model=null, deferredPrompt=null;
@@ -1225,5 +1308,7 @@ try{setLotteryTab(localStorage.getItem('lottery_active_tab')||'lotto')}catch(e){
 if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}))}
 try{if(localStorage.getItem(CACHE_KEY))useCached(true)}catch(e){}
 </script>
+
+</div>
 </body>
 </html>
