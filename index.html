@@ -65,7 +65,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand">로또 분석기 V5.1</div>
+    <div class="brand">로또 분석기 V5.2</div>
     <span id="onlineState" class="badge">상태 확인중</span>
     <div class="grow"></div>
     <button id="installBtn" style="display:none">홈 화면에 설치</button>
@@ -284,27 +284,82 @@ function renderRanking(){
   document.querySelector('#rankTable').innerHTML=`<table><thead><tr><th>#</th><th>번호</th><th>종합</th><th>누적</th><th>20회</th><th>50회</th><th>미출현</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${ball(r.n,'hot')}</td><td>${r.score.toFixed(2)}</td><td>${r.all}</td><td>${r.r20}</td><td>${r.r50}</td><td>${r.gap}</td></tr>`).join('')}</tbody></table>`;
 }
 function renderTickets(top,count){
-  const out=[];
-  for(const x of top){
-    if(out.every(y=>y.c.filter(n=>x.c.includes(n)).length<=3)){
-      out.push(x);
-      if(out.length>=count)break;
-    }
-  }
-  if(out.length<count){
-    for(const x of top){
-      if(out.some(y=>y.c.join(',')===x.c.join(',')))continue;
-      if(out.every(y=>y.c.filter(n=>x.c.includes(n)).length<=4)){
-        out.push(x);
-        if(out.length>=count)break;
+  // 5게임 기준 동일 번호 최대 2회.
+  // 10/20게임은 같은 비율로 4회/8회까지 허용.
+  const baseCap=Math.max(2,Math.ceil(count*0.4));
+
+  function chooseBundle(cap){
+    const selected=[];
+    const freq=new Array(46).fill(0);
+    const used=new Set();
+
+    while(selected.length<count){
+      let best=null,bestAdj=-Infinity;
+
+      for(const x of top){
+        const key=x.c.join(',');
+        if(used.has(key))continue;
+
+        let valid=true;
+        for(const n of x.c){
+          if(freq[n]>=cap){valid=false;break}
+        }
+        if(!valid)continue;
+
+        // 이미 사용된 번호를 다시 쓰는 조합에는 패널티를 주고,
+        // 원래 분석 점수는 최대한 유지한다.
+        let repeatPenalty=0;
+        for(const n of x.c)repeatPenalty += freq[n]*0.18;
+
+        // 기존 게임과 4개 이상 겹치는 조합은 추가 감점
+        let overlapPenalty=0;
+        for(const y of selected){
+          const overlap=y.c.filter(n=>x.c.includes(n)).length;
+          if(overlap>=4) overlapPenalty += (overlap-3)*0.55;
+          else if(overlap===3) overlapPenalty += 0.12;
+        }
+
+        const adjusted=x.score-repeatPenalty-overlapPenalty;
+        if(adjusted>bestAdj){
+          bestAdj=adjusted;
+          best=x;
+        }
       }
+
+      if(!best)break;
+      selected.push({...best,bundleScore:bestAdj});
+      used.add(best.c.join(','));
+      for(const n of best.c)freq[n]++;
     }
+
+    return {selected,freq};
+  }
+
+  // 우선 목표 제한으로 선택. 부족하면 한 단계만 완화.
+  let result=chooseBundle(baseCap);
+  let appliedCap=baseCap;
+  if(result.selected.length<count){
+    appliedCap=baseCap+1;
+    result=chooseBundle(appliedCap);
+  }
+
+  const out=result.selected;
+  const freq=result.freq;
+  const repeated=[];
+  for(let n=1;n<=45;n++){
+    if(freq[n]>1)repeated.push(`${n}×${freq[n]}`);
   }
 
   document.querySelector('#recommendations').innerHTML =
     `<div style="margin-top:12px;padding:10px 12px;background:#0f141b;border:1px solid #30363d;border-radius:12px">
-      <div style="font-weight:900">추천 조합</div>
-      <div class="small">상위 후보군에서 게임끼리 같은 번호가 과도하게 겹치지 않도록 분산해 선정한 조합입니다.</div>
+      <div style="font-weight:900">추천 조합 · 묶음 최적화</div>
+      <div class="small">
+        ${count}게임 전체를 하나의 묶음으로 계산했습니다.
+        동일 번호는 최대 ${appliedCap}회까지 허용하며, 반복 번호에는 패널티를 적용해 전체 분산을 높였습니다.
+      </div>
+      <div class="small" style="margin-top:5px">
+        ${repeated.length ? `반복 번호: ${repeated.join(' · ')}` : '반복 번호 없음'}
+      </div>
     </div>`+
     out.map((x,i)=>{
       const f=comboFeatures(x.c,model);
