@@ -66,7 +66,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand">로또 분석기 V5.3</div>
+    <div class="brand">로또 분석기 V5.4</div>
     <span id="onlineState" class="badge">상태 확인중</span>
     <div class="grow"></div>
     <button id="installBtn" style="display:none">홈 화면에 설치</button>
@@ -127,11 +127,11 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
     <section class="card span4">
       <h3 style="margin-top:0">분석 기준</h3>
       <div class="small">
-        누적 출현 빈도, 최근 20/50/100회 빈도, 미출현 간격, 번호쌍 동반출현을 점수화합니다.
+        과거 통계 점수는 참고 비중으로만 사용하고, 실제 추천에서는 5게임 전체의 번호 커버리지와 중복 최소화, 홀짝·저고·합계 분산을 더 크게 반영합니다.
         조합 수준에서는 홀짝, 저·고 구간, 합계, 연속수, 끝수 중복, 직전 회차 중복을 과도하지 않게 보정합니다.
       </div>
       <div class="note small" style="margin-top:12px">
-        자주 나온 번호나 오래 안 나온 번호가 다음 회차에 더 잘 나온다는 보장은 없습니다. 이 앱은 예측 보장이 아니라 조합 필터링/분석 도구입니다.
+        자주 나온 번호나 오래 안 나온 번호가 다음 회차에 더 잘 나온다는 보장은 없습니다. 이 앱은 예측 보장이 아니라 조합 필터링/분석 도구입니다. V5.4부터는 통계 모델보다 구매 묶음의 분산 최적화를 우선합니다.
       </div>
     </section>
 
@@ -236,15 +236,24 @@ function comboFeatures(c,m){
   return{odd,low,sum,consecutive,dupEnd,prev,pairScore};
 }
 function scoreCombo(c,m,mode){
-  const ns=rescoreNumbers(m,mode);let s=mean(c.map(n=>ns[n])),f=comboFeatures(c,m);
-  s+=(f.odd===3?.42:(f.odd===2||f.odd===4?.20:-.25));
-  s+=(f.low===3?.35:(f.low===2||f.low===4?.15:-.18));
-  s+=Math.max(-.65,.35-Math.abs(f.sum-138)/42);
-  s+=f.consecutive<=1?.12:-.20*f.consecutive;
-  s+=f.dupEnd<=2?.12:-.18*(f.dupEnd-2);
-  s+=f.prev<=2?.12:-.25*(f.prev-2);
-  s+=Math.min(.35,f.pairScore/Math.max(m.N,1)*2.2);
-  return s;
+  const ns=rescoreNumbers(m,mode);
+  // V5.4: 통계 번호점수는 참고 비중(25%)으로 축소
+  let stat=mean(c.map(n=>ns[n]));
+  const f=comboFeatures(c,m);
+
+  // 조합 구조 점수(75% 중심)
+  let structure=0;
+  structure += (f.odd===3?0.62:(f.odd===2||f.odd===4?0.35:-0.35));
+  structure += (f.low===3?0.55:(f.low===2||f.low===4?0.30:-0.28));
+  structure += Math.max(-0.85,0.55-Math.abs(f.sum-138)/34);
+  structure += f.consecutive===0?0.22:(f.consecutive===1?0.10:-0.28*f.consecutive);
+  structure += f.dupEnd<=2?0.18:-0.22*(f.dupEnd-2);
+  structure += f.prev<=1?0.20:(f.prev===2?0.05:-0.30*(f.prev-2));
+
+  // 번호쌍 동반출현은 과적합 방지를 위해 매우 약하게만 반영
+  const pairBonus=Math.min(0.18,f.pairScore/Math.max(m.N,1)*1.1);
+
+  return stat*0.25 + structure*0.75 + pairBonus;
 }
 function seeded(seed){let x=seed|0;return()=>((x=Math.imul(1664525,x)+1013904223|0)>>>0)/4294967296}
 function randomCombo(rng,include=[],exclude=[]){
@@ -285,14 +294,15 @@ function renderRanking(){
   document.querySelector('#rankTable').innerHTML=`<table><thead><tr><th>#</th><th>번호</th><th>종합</th><th>누적</th><th>20회</th><th>50회</th><th>미출현</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${ball(r.n,'hot')}</td><td>${r.score.toFixed(2)}</td><td>${r.all}</td><td>${r.r20}</td><td>${r.r50}</td><td>${r.gap}</td></tr>`).join('')}</tbody></table>`;
 }
 function renderTickets(top,count){
-  // 5게임 기준 동일 번호 최대 2회.
-  // 10/20게임은 같은 비율로 4회/8회까지 허용.
   const baseCap=Math.max(2,Math.ceil(count*0.4));
 
   function chooseBundle(cap){
     const selected=[];
     const freq=new Array(46).fill(0);
     const used=new Set();
+    const usedSums=[];
+    const usedOdd=[];
+    const usedLow=[];
 
     while(selected.length<count){
       let best=null,bestAdj=-Infinity;
@@ -307,20 +317,36 @@ function renderTickets(top,count){
         }
         if(!valid)continue;
 
-        // 이미 사용된 번호를 다시 쓰는 조합에는 패널티를 주고,
-        // 원래 분석 점수는 최대한 유지한다.
-        let repeatPenalty=0;
-        for(const n of x.c)repeatPenalty += freq[n]*0.18;
+        const f=comboFeatures(x.c,model);
 
-        // 기존 게임과 4개 이상 겹치는 조합은 추가 감점
+        // 같은 번호 반복 최소화
+        let repeatPenalty=0;
+        for(const n of x.c)repeatPenalty += freq[n]*0.34;
+
+        // 기존 게임과 번호 겹침 최소화
         let overlapPenalty=0;
         for(const y of selected){
           const overlap=y.c.filter(n=>x.c.includes(n)).length;
-          if(overlap>=4) overlapPenalty += (overlap-3)*0.55;
-          else if(overlap===3) overlapPenalty += 0.12;
+          if(overlap>=4) overlapPenalty += (overlap-3)*0.95;
+          else if(overlap===3) overlapPenalty += 0.38;
+          else if(overlap===2) overlapPenalty += 0.10;
         }
 
-        const adjusted=x.score-repeatPenalty-overlapPenalty;
+        // 5게임 전체가 비슷한 합계/홀짝/저고 형태로 몰리지 않게 분산
+        let diversityBonus=0;
+        if(usedSums.length){
+          const minSumDist=Math.min(...usedSums.map(v=>Math.abs(v-f.sum)));
+          diversityBonus += Math.min(0.28,minSumDist/70);
+        }
+        if(usedOdd.length && !usedOdd.includes(f.odd)) diversityBonus += 0.10;
+        if(usedLow.length && !usedLow.includes(f.low)) diversityBonus += 0.10;
+
+        // 새로운 번호를 많이 포함할수록 보너스
+        const fresh=x.c.filter(n=>freq[n]===0).length;
+        const coverageBonus=fresh*0.13;
+
+        const adjusted=x.score-repeatPenalty-overlapPenalty+diversityBonus+coverageBonus;
+
         if(adjusted>bestAdj){
           bestAdj=adjusted;
           best=x;
@@ -328,15 +354,19 @@ function renderTickets(top,count){
       }
 
       if(!best)break;
+
+      const bf=comboFeatures(best.c,model);
       selected.push({...best,bundleScore:bestAdj});
       used.add(best.c.join(','));
       for(const n of best.c)freq[n]++;
+      usedSums.push(bf.sum);
+      usedOdd.push(bf.odd);
+      usedLow.push(bf.low);
     }
 
     return {selected,freq};
   }
 
-  // 우선 목표 제한으로 선택. 부족하면 한 단계만 완화.
   let result=chooseBundle(baseCap);
   let appliedCap=baseCap;
   if(result.selected.length<count){
@@ -346,6 +376,7 @@ function renderTickets(top,count){
 
   const out=result.selected;
   const freq=result.freq;
+  const uniqueCount=freq.filter(v=>v>0).length;
   const repeated=[];
   for(let n=1;n<=45;n++){
     if(freq[n]>1)repeated.push(`${n}×${freq[n]}`);
@@ -353,13 +384,13 @@ function renderTickets(top,count){
 
   document.querySelector('#recommendations').innerHTML =
     `<div style="margin-top:12px;padding:10px 12px;background:#0f141b;border:1px solid #30363d;border-radius:12px">
-      <div style="font-weight:900">추천 조합 · 묶음 최적화</div>
+      <div style="font-weight:900">추천 조합 · 포트폴리오 최적화</div>
       <div class="small">
-        ${count}게임 전체를 하나의 묶음으로 계산했습니다.
-        동일 번호는 최대 ${appliedCap}회까지 허용하며, 반복 번호에는 패널티를 적용해 전체 분산을 높였습니다.
+        과거 통계점수는 참고 비중으로만 사용하고, ${count}게임 전체의 번호 커버리지·중복 최소화·합계/홀짝/저고 분산을 우선했습니다.
       </div>
       <div class="small" style="margin-top:5px">
-        ${repeated.length ? `반복 번호: ${repeated.join(' · ')}` : '반복 번호 없음'}
+        총 ${count*6}칸 중 서로 다른 번호 ${uniqueCount}개 · 동일 번호 최대 ${appliedCap}회
+        ${repeated.length ? ` · 반복: ${repeated.join(' · ')}` : ' · 반복 번호 없음'}
       </div>
     </div>`+
     out.map((x,i)=>{
@@ -393,9 +424,15 @@ function makeWorker(){
                 const ends=new Array(10).fill(0);for(const n of ar)ends[n%10]++;const dup=Math.max(...ends);
                 let pv=0;for(const n of ar)if(prev.has(n))pv++;
                 let ps=0;for(let i=0;i<6;i++)for(let j=i+1;j<6;j++)ps+=pairFlat[ar[i]*46+ar[j]]||0;
-                let s=(numScore[a]+numScore[b]+numScore[c]+numScore[d]+numScore[e1]+numScore[f])/6;
-                s+=(odd===3?.42:(odd===2||odd===4?.20:-.25));s+=(low===3?.35:(low===2||low===4?.15:-.18));
-                s+=Math.max(-.65,.35-Math.abs(sum-138)/42);s+=con<=1?.12:-.20*con;s+=dup<=2?.12:-.18*(dup-2);s+=pv<=2?.12:-.25*(pv-2);s+=Math.min(.35,ps/Math.max(N,1)*2.2);
+                let stat=(numScore[a]+numScore[b]+numScore[c]+numScore[d]+numScore[e1]+numScore[f])/6;
+                let structure=0;
+                structure+=(odd===3?.62:(odd===2||odd===4?.35:-.35));
+                structure+=(low===3?.55:(low===2||low===4?.30:-.28));
+                structure+=Math.max(-.85,.55-Math.abs(sum-138)/34);
+                structure+=con===0?.22:(con===1?.10:-.28*con);
+                structure+=dup<=2?.18:-.22*(dup-2);
+                structure+=pv<=1?.20:(pv===2?.05:-.30*(pv-2));
+                let s=stat*.25+structure*.75+Math.min(.18,ps/Math.max(N,1)*1.1);
                 push({c:ar,score:s},limit);
                 if((checked%120000)===0){const pct=Math.floor(checked/8145060*100);if(pct!==last){last=pct;postMessage({type:'progress',pct,checked})}}
               }
