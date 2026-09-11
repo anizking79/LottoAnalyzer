@@ -65,7 +65,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand">로또 분석기 V5</div>
+    <div class="brand">로또 분석기 V5.1</div>
     <span id="onlineState" class="badge">상태 확인중</span>
     <div class="grow"></div>
     <button id="installBtn" style="display:none">홈 화면에 설치</button>
@@ -284,39 +284,36 @@ function renderRanking(){
   document.querySelector('#rankTable').innerHTML=`<table><thead><tr><th>#</th><th>번호</th><th>종합</th><th>누적</th><th>20회</th><th>50회</th><th>미출현</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${ball(r.n,'hot')}</td><td>${r.score.toFixed(2)}</td><td>${r.all}</td><td>${r.r20}</td><td>${r.r50}</td><td>${r.gap}</td></tr>`).join('')}</tbody></table>`;
 }
 function renderTickets(top,count){
-  const concentrated=top.slice(0,count);
-  const diversified=[];
+  const out=[];
   for(const x of top){
-    if(diversified.every(y=>y.c.filter(n=>x.c.includes(n)).length<=3)){
-      diversified.push(x);
-      if(diversified.length>=count)break;
+    if(out.every(y=>y.c.filter(n=>x.c.includes(n)).length<=3)){
+      out.push(x);
+      if(out.length>=count)break;
     }
   }
-  if(diversified.length<count){
+  if(out.length<count){
     for(const x of top){
-      if(diversified.some(y=>y.c.join(',')===x.c.join(',')))continue;
-      if(diversified.every(y=>y.c.filter(n=>x.c.includes(n)).length<=4)){
-        diversified.push(x);
-        if(diversified.length>=count)break;
+      if(out.some(y=>y.c.join(',')===x.c.join(',')))continue;
+      if(out.every(y=>y.c.filter(n=>x.c.includes(n)).length<=4)){
+        out.push(x);
+        if(out.length>=count)break;
       }
     }
   }
 
-  const section=(title,items,desc)=>`
-    <div style="margin-top:12px;padding:10px 12px;background:#0f141b;border:1px solid #30363d;border-radius:12px">
-      <div style="font-weight:900">${title}</div>
-      <div class="small">${desc}</div>
+  document.querySelector('#recommendations').innerHTML =
+    `<div style="margin-top:12px;padding:10px 12px;background:#0f141b;border:1px solid #30363d;border-radius:12px">
+      <div style="font-weight:900">추천 조합</div>
+      <div class="small">상위 후보군에서 게임끼리 같은 번호가 과도하게 겹치지 않도록 분산해 선정한 조합입니다.</div>
     </div>`+
-    items.map((x,i)=>{const f=comboFeatures(x.c,model);return `
-      <div class="result">
+    out.map((x,i)=>{
+      const f=comboFeatures(x.c,model);
+      return `<div class="result">
         <span class="score">${i+1}위 · ${x.score.toFixed(3)}</span><br>
         ${x.c.map(n=>ball(n,'pick')).join('')}
         <div class="small">합 ${f.sum} · 홀짝 ${f.odd}:${6-f.odd} · 저/고 ${f.low}:${6-f.low} · 직전중복 ${f.prev} · 연속쌍 ${f.consecutive}</div>
-      </div>`}).join('');
-
-  document.querySelector('#recommendations').innerHTML =
-    section('A. 상위 점수 조합',concentrated,'현재 모델 점수가 가장 높은 조합입니다. 같은 핵심 번호가 여러 게임에 반복될 수 있습니다.')+
-    section('B. 분산 추천 조합',diversified,'상위 후보군 안에서 게임끼리 같은 번호가 과도하게 겹치지 않도록 분산한 실제 구매용 후보입니다.');
+      </div>`;
+    }).join('');
 }
 
 function makeWorker(){
