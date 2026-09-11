@@ -65,7 +65,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand">로또 분석기 V3</div>
+    <div class="brand">로또 분석기 V4</div>
     <span id="onlineState" class="badge">상태 확인중</span>
     <div class="grow"></div>
     <button id="installBtn" style="display:none">홈 화면에 설치</button>
@@ -150,7 +150,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
         <button id="backtestBtn">실행</button>
       </div>
       <div id="backtest" class="small" style="margin-top:10px">
-        각 회차 직전 데이터만 사용해 후보 5게임을 만들고 실제 결과와 비교합니다.
+        각 회차 직전 데이터만 사용해 후보 5게임을 만들고 실제 결과와 비교합니다. 백테스트는 별도 계산 스레드에서 진행됩니다.
       </div>
     </section>
 
@@ -167,7 +167,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
 
 <script>
 const DATA_URL='https://smok95.github.io/lotto/results/all.json';
-const CACHE_KEY='lotto645_draws_v3';
+const CACHE_KEY='lotto645_draws_v4';
 let draws=[], model=null, deferredPrompt=null;
 
 window.addEventListener('beforeinstallprompt', e=>{
@@ -284,8 +284,39 @@ function renderRanking(){
   document.querySelector('#rankTable').innerHTML=`<table><thead><tr><th>#</th><th>번호</th><th>종합</th><th>누적</th><th>20회</th><th>50회</th><th>미출현</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${ball(r.n,'hot')}</td><td>${r.score.toFixed(2)}</td><td>${r.all}</td><td>${r.r20}</td><td>${r.r50}</td><td>${r.gap}</td></tr>`).join('')}</tbody></table>`;
 }
 function renderTickets(top,count){
-  const out=[];for(const x of top){if(out.every(y=>y.c.filter(n=>x.c.includes(n)).length<=4)){out.push(x);if(out.length>=count)break}}
-  document.querySelector('#recommendations').innerHTML=out.map((x,i)=>{const f=comboFeatures(x.c,model);return `<div class="result"><span class="score">${i+1}위 · ${x.score.toFixed(3)}</span><br>${x.c.map(n=>ball(n,'pick')).join('')}<div class="small">합 ${f.sum} · 홀짝 ${f.odd}:${6-f.odd} · 저/고 ${f.low}:${6-f.low} · 직전중복 ${f.prev} · 연속쌍 ${f.consecutive}</div></div>`}).join('');
+  const concentrated=top.slice(0,count);
+  const diversified=[];
+  for(const x of top){
+    if(diversified.every(y=>y.c.filter(n=>x.c.includes(n)).length<=3)){
+      diversified.push(x);
+      if(diversified.length>=count)break;
+    }
+  }
+  if(diversified.length<count){
+    for(const x of top){
+      if(diversified.some(y=>y.c.join(',')===x.c.join(',')))continue;
+      if(diversified.every(y=>y.c.filter(n=>x.c.includes(n)).length<=4)){
+        diversified.push(x);
+        if(diversified.length>=count)break;
+      }
+    }
+  }
+
+  const section=(title,items,desc)=>`
+    <div style="margin-top:12px;padding:10px 12px;background:#0f141b;border:1px solid #30363d;border-radius:12px">
+      <div style="font-weight:900">${title}</div>
+      <div class="small">${desc}</div>
+    </div>`+
+    items.map((x,i)=>{const f=comboFeatures(x.c,model);return `
+      <div class="result">
+        <span class="score">${i+1}위 · ${x.score.toFixed(3)}</span><br>
+        ${x.c.map(n=>ball(n,'pick')).join('')}
+        <div class="small">합 ${f.sum} · 홀짝 ${f.odd}:${6-f.odd} · 저/고 ${f.low}:${6-f.low} · 직전중복 ${f.prev} · 연속쌍 ${f.consecutive}</div>
+      </div>`}).join('');
+
+  document.querySelector('#recommendations').innerHTML =
+    section('A. 상위 점수 조합',concentrated,'현재 모델 점수가 가장 높은 조합입니다. 같은 핵심 번호가 여러 게임에 반복될 수 있습니다.')+
+    section('B. 분산 추천 조합',diversified,'상위 후보군 안에서 게임끼리 같은 번호가 과도하게 겹치지 않도록 분산한 실제 구매용 후보입니다.');
 }
 
 function makeWorker(){
@@ -344,17 +375,131 @@ function doGenerate(){
   w.postMessage({numScore,pairFlat,latest:model.latest.numbers,include:inc,exclude:exc,limit:Math.max(600,count*100),N:model.N});
 }
 function maxMatch(tickets,winning){return Math.max(...tickets.map(t=>t.c.filter(n=>winning.includes(n)).length))}
+function makeBacktestWorker(){
+  const code=`
+  function mean(a){return a.reduce((x,y)=>x+y,0)/Math.max(a.length,1)}
+  function std(a){let m=mean(a);return Math.sqrt(mean(a.map(x=>(x-m)*(x-m))))||1}
+  function z(v,a){return (v-mean(a))/std(a)}
+  function seeded(seed){let x=seed|0;return()=>((x=Math.imul(1664525,x)+1013904223|0)>>>0)/4294967296}
+  function modeWeights(mode){
+    if(mode==='trend')return{all:.08,r20:.38,r50:.30,r100:.16,gap:.08};
+    if(mode==='long')return{all:.42,r20:.08,r50:.12,r100:.23,gap:.15};
+    if(mode==='overdue')return{all:.12,r20:.10,r50:.13,r100:.15,gap:.50};
+    return{all:.20,r20:.25,r50:.22,r100:.18,gap:.15};
+  }
+  function build(ds,mode){
+    const N=ds.length,nums=Array.from({length:45},(_,i)=>i+1),freq={},gap={},pairs={};
+    for(const n of nums)freq[n]=0;
+    for(const d of ds)for(const n of d.numbers)freq[n]++;
+    function rec(w){const o={};for(const n of nums)o[n]=0;for(const d of ds.slice(-Math.min(w,N)))for(const n of d.numbers)o[n]++;return o}
+    const r20=rec(20),r50=rec(50),r100=rec(100);
+    for(const n of nums){let g=N;for(let i=N-1;i>=0;i--){if(ds[i].numbers.includes(n)){g=N-1-i;break}}gap[n]=g}
+    for(const d of ds){for(let i=0;i<6;i++)for(let j=i+1;j<6;j++){let a=d.numbers[i],b=d.numbers[j];if(a>b){const t=a;a=b;b=t}const k=a*46+b;pairs[k]=(pairs[k]||0)+1}}
+    const A={freq:nums.map(n=>freq[n]),r20:nums.map(n=>r20[n]),r50:nums.map(n=>r50[n]),r100:nums.map(n=>r100[n]),gap:nums.map(n=>gap[n])};
+    const w=modeWeights(mode),score=new Array(46).fill(0);
+    for(const n of nums)score[n]=w.all*z(freq[n],A.freq)+w.r20*z(r20[n],A.r20)+w.r50*z(r50[n],A.r50)+w.r100*z(r100[n],A.r100)+w.gap*z(gap[n],A.gap);
+    return{N,score,pairs,latest:new Set(ds[N-1].numbers)};
+  }
+  function scoreCombo(c,m){
+    let s=0;for(const n of c)s+=m.score[n];s/=6;
+    let odd=0,low=0,sum=0,con=0,prev=0,ps=0;const ends=new Array(10).fill(0);
+    for(let i=0;i<6;i++){const n=c[i];odd+=n&1;low+=n<=22;sum+=n;ends[n%10]++;if(m.latest.has(n))prev++;if(i&&c[i]-c[i-1]===1)con++}
+    for(let i=0;i<6;i++)for(let j=i+1;j<6;j++)ps+=m.pairs[c[i]*46+c[j]]||0;
+    let dup=0;for(const v of ends)if(v>dup)dup=v;
+    s+=(odd===3?.42:(odd===2||odd===4?.20:-.25));
+    s+=(low===3?.35:(low===2||low===4?.15:-.18));
+    s+=Math.max(-.65,.35-Math.abs(sum-138)/42);
+    s+=con<=1?.12:-.20*con;
+    s+=dup<=2?.12:-.18*(dup-2);
+    s+=prev<=2?.12:-.25*(prev-2);
+    s+=Math.min(.35,ps/Math.max(m.N,1)*2.2);
+    return s;
+  }
+  function randomCombo(rng){
+    const p=Array.from({length:45},(_,i)=>i+1),a=[];
+    for(let k=0;k<6;k++){const i=Math.floor(rng()*p.length);a.push(p.splice(i,1)[0])}
+    a.sort((x,y)=>x-y);return a;
+  }
+  function topTickets(ds,mode,seed){
+    const m=build(ds,mode),rng=seeded(seed),cand=[],seen=new Set();
+    const samples=7000;
+    for(let i=0;i<samples;i++){
+      const c=randomCombo(rng),k=c.join(',');
+      if(seen.has(k))continue;seen.add(k);
+      cand.push({c,score:scoreCombo(c,m)});
+    }
+    cand.sort((a,b)=>b.score-a.score);
+    const out=[];
+    for(const x of cand){
+      if(out.every(y=>y.c.filter(n=>x.c.includes(n)).length<=3)){out.push(x);if(out.length>=5)break}
+    }
+    if(out.length<5){
+      for(const x of cand){
+        if(out.some(y=>y.c.join(',')===x.c.join(',')))continue;
+        if(out.every(y=>y.c.filter(n=>x.c.includes(n)).length<=4)){out.push(x);if(out.length>=5)break}
+      }
+    }
+    return out;
+  }
+  function maxMatch(tickets,winning){
+    let best=0;
+    for(const t of tickets){let c=0;for(const n of t.c)if(winning.includes(n))c++;if(c>best)best=c}
+    return best;
+  }
+  onmessage=e=>{
+    const {draws,rounds,mode}=e.data;
+    const n=Math.min(rounds,draws.length-100),start=draws.length-n;
+    const H=[0,0,0,0,0,0,0],R=[0,0,0,0,0,0,0];
+    let hs=0,rs=0;
+    for(let idx=start;idx<draws.length;idx++){
+      const target=draws[idx].numbers,train=draws.slice(0,idx);
+      const tickets=topTickets(train,mode,draws[idx].draw_no*3571);
+      const mm=maxMatch(tickets,target);H[mm]++;hs+=mm;
+      const rng=seeded(draws[idx].draw_no*811),rt=[];
+      for(let j=0;j<5;j++)rt.push({c:randomCombo(rng)});
+      const rm=maxMatch(rt,target);R[rm]++;rs+=rm;
+      const done=idx-start+1;
+      postMessage({type:'progress',done,total:n,pct:Math.floor(done/n*100)});
+    }
+    postMessage({type:'done',H,R,hs,rs,n});
+  }`;
+  return new Worker(URL.createObjectURL(new Blob([code],{type:'text/javascript'})));
+}
+
 function runBacktest(){
   if(draws.length<120)return alert('백테스트에는 충분한 전체 데이터가 필요합니다.');
-  const n=Math.min(+document.querySelector('#backRounds').value,draws.length-100),mode=document.querySelector('#mode').value;
-  let H=[0,0,0,0,0,0,0],R=[0,0,0,0,0,0,0],hs=0,rs=0,start=draws.length-n;
-  for(let idx=start;idx<draws.length;idx++){
-    const tr=draws.slice(0,idx),m=buildModel(tr),target=draws[idx].numbers,t=generateTop(tr,m,mode,5,[],[],draws[idx].draw_no*3571);
-    const mm=maxMatch(t,target);H[mm]++;hs+=mm;const rng=seeded(draws[idx].draw_no*811),rt=[0,1,2,3,4].map(()=>({c:randomCombo(rng)})),rm=maxMatch(rt,target);R[rm]++;rs+=rm;
-  }
-  const ge=(a,k)=>a.slice(k).reduce((x,y)=>x+y,0);
-  document.querySelector('#backtest').innerHTML=`<table><tr><th></th><th>분석모델</th><th>랜덤 5게임</th></tr><tr><td>평균 최대일치</td><td>${(hs/n).toFixed(2)}</td><td>${(rs/n).toFixed(2)}</td></tr><tr><td>3개 이상</td><td>${ge(H,3)}/${n}</td><td>${ge(R,3)}/${n}</td></tr><tr><td>4개 이상</td><td>${ge(H,4)}/${n}</td><td>${ge(R,4)}/${n}</td></tr><tr><td>5개 이상</td><td>${ge(H,5)}/${n}</td><td>${ge(R,5)}/${n}</td></tr></table>`;
-  log(`백테스트 완료: 최근 ${n}회`);
+  const n=Math.min(+document.querySelector('#backRounds').value,draws.length-100);
+  const mode=document.querySelector('#mode').value;
+  const box=document.querySelector('#backtest');
+  const btn=document.querySelector('#backtestBtn');
+  btn.disabled=true;
+  box.innerHTML=`<div class="small">백테스트 준비중...</div><div class="progress" style="margin-top:8px"><i id="btBar" style="width:0%"></i></div><div class="small" id="btText" style="margin-top:7px">0 / ${n}</div>`;
+
+  const w=makeBacktestWorker();
+  w.onmessage=ev=>{
+    const d=ev.data;
+    if(d.type==='progress'){
+      const bar=document.querySelector('#btBar'),t=document.querySelector('#btText');
+      if(bar)bar.style.width=d.pct+'%';
+      if(t)t.textContent=`${d.done} / ${d.total} 회차 분석 · ${d.pct}%`;
+    }else{
+      const ge=(a,k)=>a.slice(k).reduce((x,y)=>x+y,0);
+      box.innerHTML=`<table>
+        <tr><th></th><th>분석모델 5게임</th><th>랜덤 5게임</th></tr>
+        <tr><td>평균 최대일치</td><td>${(d.hs/d.n).toFixed(2)}개</td><td>${(d.rs/d.n).toFixed(2)}개</td></tr>
+        <tr><td>3개 이상</td><td>${ge(d.H,3)}/${d.n}</td><td>${ge(d.R,3)}/${d.n}</td></tr>
+        <tr><td>4개 이상</td><td>${ge(d.H,4)}/${d.n}</td><td>${ge(d.R,4)}/${d.n}</td></tr>
+        <tr><td>5개 이상</td><td>${ge(d.H,5)}/${d.n}</td><td>${ge(d.R,5)}/${d.n}</td></tr>
+      </table>
+      <div class="small" style="margin-top:8px">※ 각 회차에서는 그 회차 이전 데이터만 사용했습니다. 추천 후보 생성에는 고정 시드 난수 탐색을 사용해 같은 버전에서는 재현 가능합니다.</div>`;
+      btn.disabled=false;log(`백테스트 완료: 최근 ${d.n}회 / ${mode}`);w.terminate();
+    }
+  };
+  w.onerror=e=>{
+    box.innerHTML=`<div class="small">백테스트 오류: ${e.message}</div>`;
+    btn.disabled=false;log('백테스트 오류: '+e.message);w.terminate();
+  };
+  w.postMessage({draws,rounds:n,mode});
 }
 
 document.querySelector('#loadBtn').onclick=loadRemote;document.querySelector('#mobileLoadBtn').onclick=loadRemote;
