@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0d1117">
+<meta name="robots" content="noindex,nofollow,noarchive">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./icon.svg" type="image/svg+xml">
 <title>로또 6/45 분석기 V3</title>
@@ -65,7 +66,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand">로또 분석기 V5.2</div>
+    <div class="brand">로또 분석기 V5.3</div>
     <span id="onlineState" class="badge">상태 확인중</span>
     <div class="grow"></div>
     <button id="installBtn" style="display:none">홈 화면에 설치</button>
@@ -146,7 +147,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
 
     <section class="card span6">
       <div class="controls"><h3 style="margin:0">백테스트</h3><div class="grow"></div>
-        <select id="backRounds"><option value="30">최근 30회</option><option value="50">최근 50회</option><option value="100">최근 100회</option></select>
+        <select id="backRounds"><option value="30">최근 30회</option><option value="50">최근 50회</option><option value="100">최근 100회</option><option value="300">최근 300회</option><option value="500">최근 500회</option><option value="9999">전체 가능구간</option></select>
         <button id="backtestBtn">실행</button>
       </div>
       <div id="backtest" class="small" style="margin-top:10px">
@@ -585,10 +586,14 @@ function runBacktest(){
       <div class="small" style="margin-bottom:8px">랜덤 기준: ${d.randomSeasons}회 반복 시뮬레이션 · 95% 범위 표시</div>
       <table>
         <tr><th>모델</th><th>평균 최대일치</th><th>3개+</th><th>4개+</th><th>5개+</th></tr>
-        ${rows.map((r,i)=>`<tr>
-          <td>${i===0?'★ ':''}${r.name}</td>
+        ${rows.map((r,i)=>{
+          const beatAvg=r.avg>b.avgHi;
+          const beat3=r.c3>b.c3Hi;
+          const badges=[i===0?'모델 내 1위':'', (beatAvg||beat3)?'랜덤 기준 초과':''].filter(Boolean);
+          return `<tr>
+          <td>${r.name}${badges.length?`<br><span class="small">${badges.join(' · ')}</span>`:''}</td>
           <td>${r.avg.toFixed(2)}</td><td>${r.c3}/${d.n}</td><td>${r.c4}/${d.n}</td><td>${r.c5}/${d.n}</td>
-        </tr>`).join('')}
+        </tr>`}).join('')}
         <tr>
           <td>랜덤 평균</td>
           <td>${b.avgMean.toFixed(2)}<br><span class="small">${b.avgLo.toFixed(2)}~${b.avgHi.toFixed(2)}</span></td>
@@ -598,7 +603,7 @@ function runBacktest(){
         </tr>
       </table>
       <div class="small" style="margin-top:9px">
-        ★는 평균 최대일치 기준 현재 구간에서 가장 높은 모델입니다. 랜덤 95% 범위를 벗어나지 못하면 통계적으로 뚜렷한 우위라고 보기 어렵습니다.
+        ‘모델 내 1위’는 네 통계 모델 중 현재 구간 성적이 가장 높다는 뜻입니다. ‘랜덤 기준 초과’는 평균 최대일치 또는 3개+ 지표가 랜덤 95% 상한을 넘었을 때만 표시됩니다.
       </div>`;
       btn.disabled=false;log(`V5 백테스트 완료: 최근 ${d.n}회 / 랜덤 ${d.randomSeasons}회 반복`);w.terminate();
     }
@@ -607,7 +612,9 @@ function runBacktest(){
     box.innerHTML=`<div class="small">백테스트 오류: ${e.message}</div>`;
     btn.disabled=false;log('백테스트 오류: '+e.message);w.terminate();
   };
-  w.postMessage({draws,rounds:n,randomSeasons:300,samples:5000});
+  const randomSeasons=n<=100?300:(n<=300?220:(n<=500?160:120));
+  const samples=n<=100?5000:(n<=300?3200:(n<=500?2400:1600));
+  w.postMessage({draws,rounds:n,randomSeasons,samples});
 }
 
 document.querySelector('#loadBtn').onclick=loadRemote;document.querySelector('#mobileLoadBtn').onclick=loadRemote;
