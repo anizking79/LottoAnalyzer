@@ -61,19 +61,46 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
   .stat{font-size:24px}
   .ball{width:36px;height:36px}
 }
+
+.tabs-main{display:grid;grid-template-columns:1fr 1fr;gap:10px;max-width:760px;margin:0 auto 16px}
+.tabs-main button{min-height:56px;font-size:17px;background:#161b22}
+.tabs-main button.active{background:#1f6feb;border-color:#58a6ff}
+.tabs-main button.pension.active{background:#6e2bd9;border-color:#a371f7}
+.view-panel{display:none}.view-panel.active{display:block}
+.pension-accent{color:#d2a8ff}.digit{display:inline-flex;align-items:center;justify-content:center;width:34px;height:40px;border:1px solid #58a6ff;border-radius:8px;font-weight:900;margin:2px;background:#0f1722}
+.groupbox{display:inline-flex;align-items:center;justify-content:center;min-width:45px;height:40px;border:1px solid #d29922;border-radius:8px;font-weight:900;margin-left:8px}
+.pension-ticket{padding:12px 0;border-bottom:1px solid var(--line)}
+.pension-ticket:last-child{border-bottom:0}
+.pension-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:8px}
+.pos-card{background:#0f141b;border:1px solid var(--line);border-radius:10px;padding:9px;text-align:center}
+.pos-card b{font-size:18px}
+@media(max-width:600px){
+  .tabs-main{grid-template-columns:1fr 1fr}
+  .tabs-main button{font-size:14px;min-height:50px;padding:8px}
+  .digit{width:30px;height:36px}
+  .pension-grid{grid-template-columns:repeat(3,1fr)}
+}
 </style>
 </head>
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand">로또 분석기 V5.4</div>
+    <div class="brand">복권 분석기 V6</div>
     <span id="onlineState" class="badge">상태 확인중</span>
     <div class="grow"></div>
     <button id="installBtn" style="display:none">홈 화면에 설치</button>
   </div>
 </header>
 
+
 <main class="wrap">
+  <div class="tabs-main">
+    <button id="tabLotto" class="active">🎱 로또 6/45</button>
+    <button id="tabPension" class="pension">∞ 연금복권 720+</button>
+  </div>
+
+  <div id="lottoView" class="view-panel active">
+
   <section class="hero">
     <h1>로또 6/45 데이터 분석 & 조합 선별</h1>
     <p>과거 당첨번호의 통계적 특성을 점수화해 실제 구매 가능한 6개 번호 조합을 선별합니다. 모든 유효 조합의 추첨 확률 자체는 동일합니다.</p>
@@ -159,12 +186,103 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
       <h3 style="margin-top:0">로그</h3><div id="log">준비됨.</div>
     </section>
   </div>
+  </div>
+
+
+<div id="pensionView" class="view-panel">
+  <section class="hero">
+    <h1 class="pension-accent">연금복권 720+ 데이터 분석 & 번호 선별</h1>
+    <p>과거 회차의 조·6자리 숫자를 자리별로 분석해 추천 번호를 구성합니다. 모든 유효 번호의 추첨 확률 자체는 동일하며 통계는 참고용입니다.</p>
+  </section>
+
+  <div class="grid">
+    <section class="card span12">
+      <div class="controls">
+        <button class="primary" id="pLoadBtn">연금 데이터 갱신</button>
+        <button id="pCachedBtn">저장 데이터 사용</button>
+        <div class="grow"></div>
+        <span id="pStatus" class="small">데이터 미로드</span>
+      </div>
+    </section>
+
+    <section class="card span4"><div class="label">로드된 회차</div><div class="stat" id="pDrawCount">-</div></section>
+    <section class="card span4"><div class="label">최신 회차</div><div class="stat" id="pLatestDraw">-</div></section>
+    <section class="card span4">
+      <div class="label">최신 1등 번호</div>
+      <div id="pLatestNumber">-</div>
+    </section>
+
+    <section class="card span8">
+      <div class="controls">
+        <h3 style="margin:0">추천 번호</h3><div class="grow"></div>
+        <select id="pMode">
+          <option value="balanced">균형형</option>
+          <option value="trend">최근 추세형</option>
+          <option value="long">장기 통계형</option>
+          <option value="overdue">장기 미출현형</option>
+        </select>
+        <select id="pGames"><option>5</option><option>10</option><option>20</option></select>
+        <button class="primary" id="pGenerateBtn">번호 생성</button>
+      </div>
+      <div class="small" style="margin-top:9px">
+        조(1~5)와 6자리 각 위치를 따로 점수화하고, 여러 게임을 만들 때 같은 전체번호가 반복되지 않도록 분산합니다.
+      </div>
+      <div id="pRecommendations" class="small" style="margin-top:10px">연금 데이터를 불러온 뒤 번호를 생성하세요.</div>
+    </section>
+
+    <section class="card span4">
+      <h3 style="margin-top:0">분석 기준</h3>
+      <div class="small">
+        조 빈도, 각 자리(십만~일)의 누적 출현빈도, 최근 20/50/100회 추세, 자리별 미출현 간격을 분석합니다.
+        6자리 전체 패턴은 홀짝, 숫자 합, 동일 숫자 반복이 지나치게 한쪽으로 몰리지 않도록 보정합니다.
+      </div>
+      <div class="note small" style="margin-top:12px">
+        연금복권은 1조 000000~5조 999999 범위이며, 1등은 조+6자리 일치입니다. 과거 출현 통계가 다음 회차 확률을 높인다는 보장은 없습니다.
+      </div>
+    </section>
+
+    <section class="card span6">
+      <div class="controls"><h3 style="margin:0">자리별 숫자 통계</h3><div class="grow"></div>
+        <select id="pStatWindow">
+          <option value="all">전체</option><option value="20">최근20회</option><option value="50">최근50회</option><option value="100">최근100회</option>
+        </select>
+      </div>
+      <div id="pPositionStats" style="margin-top:10px"></div>
+    </section>
+
+    <section class="card span6">
+      <div class="controls"><h3 style="margin:0">조 통계</h3><div class="grow"></div></div>
+      <div id="pGroupStats" style="margin-top:10px"></div>
+    </section>
+
+    <section class="card span12">
+      <div class="controls"><h3 style="margin:0">백테스트 (연금복권)</h3><div class="grow"></div>
+        <select id="pBackRounds">
+          <option value="50">최근 50회</option>
+          <option value="100">최근 100회</option>
+          <option value="200">최근 200회</option>
+          <option value="9999">전체 가능구간</option>
+        </select>
+        <button id="pBacktestBtn">실행</button>
+      </div>
+      <div id="pBacktest" class="small" style="margin-top:10px">
+        각 과거 회차 직전 데이터만 사용해 모델별 추천 5게임과 랜덤 5게임을 비교합니다. 전체번호 일치보다는 6자리 끝자리 연속 일치 수와 조 일치를 함께 봅니다.
+      </div>
+    </section>
+
+    <section class="card span12">
+      <h3 style="margin-top:0">연금 로그</h3><div id="pLog">준비됨.</div>
+    </section>
+  </div>
+</div>
+
 
   <div class="mobile-actions">
     <button class="primary" id="mobileGenerateBtn">조합 생성</button>
     <button id="mobileLoadBtn">데이터 갱신</button>
   </div>
 </main>
+
 
 <script>
 const DATA_URL='https://smok95.github.io/lotto/results/all.json';
@@ -654,12 +772,241 @@ function runBacktest(){
   w.postMessage({draws,rounds:n,randomSeasons,samples});
 }
 
-document.querySelector('#loadBtn').onclick=loadRemote;document.querySelector('#mobileLoadBtn').onclick=loadRemote;
+document.querySelector('#loadBtn').onclick=loadRemote;
 document.querySelector('#cachedBtn').onclick=()=>useCached(false);
-document.querySelector('#generateBtn').onclick=doGenerate;document.querySelector('#mobileGenerateBtn').onclick=doGenerate;
+document.querySelector('#generateBtn').onclick=doGenerate;
 document.querySelector('#backtestBtn').onclick=runBacktest;
 document.querySelector('#rankMetric').onchange=renderRanking;document.querySelector('#mode').onchange=renderRanking;
 document.querySelector('#fileInput').onchange=async e=>{try{setData(JSON.parse(await e.target.files[0].text()),'사용자 JSON')}catch(err){alert('JSON 형식을 확인하세요.')}};
+
+
+// ===== V6: 상단 탭 =====
+let activeLottery='lotto';
+function setLotteryTab(which){
+  activeLottery=which;
+  document.querySelector('#lottoView').classList.toggle('active',which==='lotto');
+  document.querySelector('#pensionView').classList.toggle('active',which==='pension');
+  document.querySelector('#tabLotto').classList.toggle('active',which==='lotto');
+  document.querySelector('#tabPension').classList.toggle('active',which==='pension');
+  const mg=document.querySelector('#mobileGenerateBtn'), ml=document.querySelector('#mobileLoadBtn');
+  if(which==='lotto'){mg.textContent='조합 생성';ml.textContent='데이터 갱신'}
+  else{mg.textContent='연금번호 생성';ml.textContent='연금 데이터 갱신'}
+  localStorage.setItem('lottery_active_tab',which);
+}
+document.querySelector('#tabLotto').onclick=()=>setLotteryTab('lotto');
+document.querySelector('#tabPension').onclick=()=>setLotteryTab('pension');
+
+// ===== 연금복권 720+ =====
+const PENSION_URL='https://papaya5rhw1984.github.io/lotto-data/pension.json';
+const PENSION_CACHE='pension720_draws_v6';
+let pDraws=[],pModel=null;
+
+function pLog(s){const e=document.querySelector('#pLog');e.textContent+='\\n'+s;e.scrollTop=e.scrollHeight}
+function pNormalize(j){
+  if(!Array.isArray(j))return[];
+  return j.map(d=>({
+    round:+(d.round??d.draw_no??0),
+    date:String(d.date??''),
+    group:+(d.group??0),
+    first:String(d.first??'').padStart(6,'0').slice(-6),
+    bonus:String(d.bonus??'').padStart(6,'0').slice(-6)
+  })).filter(d=>d.round>0&&d.group>=1&&d.group<=5&&/^\d{6}$/.test(d.first));
+}
+function pBuildModel(ds){
+  const N=ds.length;
+  const groups=Array.from({length:5},()=>0);
+  const pos=Array.from({length:6},()=>Array(10).fill(0));
+  const rec=(w)=>{
+    const p=Array.from({length:6},()=>Array(10).fill(0)),g=Array(5).fill(0);
+    for(const d of ds.slice(-Math.min(w,N))){
+      g[d.group-1]++;
+      [...d.first].forEach((ch,i)=>p[i][+ch]++);
+    }
+    return{p,g};
+  };
+  for(const d of ds){
+    groups[d.group-1]++;
+    [...d.first].forEach((ch,i)=>pos[i][+ch]++);
+  }
+  const r20=rec(20),r50=rec(50),r100=rec(100);
+  const gap=Array.from({length:6},()=>Array(10).fill(N));
+  for(let p=0;p<6;p++)for(let dig=0;dig<10;dig++){
+    for(let i=N-1;i>=0;i--){if(+ds[i].first[p]===dig){gap[p][dig]=N-1-i;break}}
+  }
+  const groupGap=Array(5).fill(N);
+  for(let g=1;g<=5;g++)for(let i=N-1;i>=0;i--){if(ds[i].group===g){groupGap[g-1]=N-1-i;break}}
+  return{N,groups,pos,r20,r50,r100,gap,groupGap,latest:ds[N-1]};
+}
+function pModeWeights(mode){
+  if(mode==='trend')return{all:.08,r20:.40,r50:.30,r100:.17,gap:.05};
+  if(mode==='long')return{all:.48,r20:.07,r50:.10,r100:.25,gap:.10};
+  if(mode==='overdue')return{all:.10,r20:.08,r50:.10,r100:.12,gap:.60};
+  return{all:.22,r20:.25,r50:.22,r100:.18,gap:.13};
+}
+function pZ(v,a){const m=mean(a),sd=std(a);return(v-m)/sd}
+function pDigitScores(m,mode){
+  const w=pModeWeights(mode),out=Array.from({length:6},()=>Array(10).fill(0));
+  for(let p=0;p<6;p++){
+    for(let d=0;d<10;d++){
+      out[p][d]=w.all*pZ(m.pos[p][d],m.pos[p])+
+        w.r20*pZ(m.r20.p[p][d],m.r20.p[p])+
+        w.r50*pZ(m.r50.p[p][d],m.r50.p[p])+
+        w.r100*pZ(m.r100.p[p][d],m.r100.p[p])+
+        w.gap*pZ(m.gap[p][d],m.gap[p]);
+    }
+  }
+  return out;
+}
+function pGroupScores(m,mode){
+  const w=pModeWeights(mode),out=Array(5).fill(0);
+  for(let i=0;i<5;i++){
+    out[i]=w.all*pZ(m.groups[i],m.groups)+w.r20*pZ(m.r20.g[i],m.r20.g)+w.r50*pZ(m.r50.g[i],m.r50.g)+w.r100*pZ(m.r100.g[i],m.r100.g)+w.gap*pZ(m.groupGap[i],m.groupGap);
+  }
+  return out;
+}
+function pScoreCandidate(group,num,m,mode){
+  const ds=pDigitScores(m,mode),gs=pGroupScores(m,mode),digits=[...num].map(Number);
+  const stat=(gs[group-1]+digits.reduce((s,d,i)=>s+ds[i][d],0)/6)/2;
+  const sum=digits.reduce((a,b)=>a+b,0),odd=digits.filter(x=>x%2).length;
+  const counts=Array(10).fill(0);digits.forEach(d=>counts[d]++);
+  const maxRep=Math.max(...counts);
+  let structure=0;
+  structure += odd===3?.42:(odd===2||odd===4?.20:-.20);
+  structure += Math.max(-.55,.32-Math.abs(sum-27)/28);
+  structure += maxRep<=2?.20:-.25*(maxRep-2);
+  return stat*.35+structure*.65;
+}
+function pRandomCandidate(rng){
+  const group=1+Math.floor(rng()*5);
+  let num='';for(let i=0;i<6;i++)num+=Math.floor(rng()*10);
+  return{group,num};
+}
+function pGenerateCandidates(count,mode){
+  const rng=seeded((pModel.latest.round||1)*9277+count),seen=new Set(),cand=[];
+  const samples=Math.max(45000,count*9000);
+  for(let i=0;i<samples;i++){
+    const x=pRandomCandidate(rng),key=x.group+'-'+x.num;
+    if(seen.has(key))continue;seen.add(key);
+    cand.push({...x,score:pScoreCandidate(x.group,x.num,pModel,mode)});
+  }
+  cand.sort((a,b)=>b.score-a.score);
+  const out=[],digitUse=Array.from({length:6},()=>Array(10).fill(0)),groupUse=Array(5).fill(0);
+  for(const x of cand){
+    const digs=[...x.num].map(Number);
+    let penalty=groupUse[x.group-1]*.18;
+    for(let p=0;p<6;p++)penalty+=digitUse[p][digs[p]]*.07;
+    const adj=x.score-penalty;
+    x.adj=adj;
+  }
+  cand.sort((a,b)=>b.adj-a.adj);
+  for(const x of cand){
+    if(out.some(y=>y.group===x.group&&y.num===x.num))continue;
+    out.push(x);groupUse[x.group-1]++;[...x.num].forEach((ch,p)=>digitUse[p][+ch]++);
+    if(out.length>=count)break;
+  }
+  return out;
+}
+function pSetData(ds,label='연금 데이터'){
+  pDraws=pNormalize(ds).sort((a,b)=>a.round-b.round);
+  if(!pDraws.length){alert('유효한 연금복권 데이터를 찾지 못했습니다.');return}
+  pModel=pBuildModel(pDraws);const L=pModel.latest;
+  document.querySelector('#pDrawCount').textContent=pDraws.length+'회';
+  document.querySelector('#pLatestDraw').textContent=L.round+'회';
+  document.querySelector('#pLatestNumber').innerHTML=`<span class="groupbox">${L.group}조</span> `+[...L.first].map(d=>`<span class="digit">${d}</span>`).join('');
+  document.querySelector('#pStatus').textContent=`${label} · ${L.round}회 ${L.date?('('+L.date.slice(0,10)+')'):''}`;
+  localStorage.setItem(PENSION_CACHE,JSON.stringify(pDraws));
+  pRenderStats();pLog(`${label} 로드 완료: ${pDraws.length}회 / 최신 ${L.round}회`);
+}
+async function pLoadRemote(){
+  document.querySelector('#pStatus').textContent='연금 데이터 불러오는 중...';
+  try{
+    const r=await fetch(PENSION_URL,{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    pSetData(await r.json(),'온라인 연금 데이터');
+  }catch(e){pLog('온라인 로드 실패: '+e.message);pUseCached(true)}
+}
+function pUseCached(silent=false){
+  try{const raw=localStorage.getItem(PENSION_CACHE);if(!raw)throw new Error('저장 없음');pSetData(JSON.parse(raw),'기기 저장 연금 데이터')}
+  catch(e){if(!silent)alert('저장된 연금복권 데이터가 없습니다.');document.querySelector('#pStatus').textContent='저장 데이터 없음'}
+}
+function pRenderStats(){
+  if(!pModel)return;
+  const w=document.querySelector('#pStatWindow').value;
+  let pos,groups;
+  if(w==='all'){pos=pModel.pos;groups=pModel.groups}
+  else{const r=pModel['r'+w];pos=r.p;groups=r.g}
+  const names=['십만','만','천','백','십','일'];
+  document.querySelector('#pPositionStats').innerHTML=`<div class="pension-grid">${
+    pos.map((arr,i)=>{
+      const ranked=arr.map((v,d)=>({d,v})).sort((a,b)=>b.v-a.v).slice(0,3);
+      return `<div class="pos-card"><div class="small">${names[i]} 자리</div><b>${ranked[0].d}</b><div class="small">${ranked.map(x=>`${x.d}:${x.v}`).join(' · ')}</div></div>`
+    }).join('')
+  }</div>`;
+  const total=groups.reduce((a,b)=>a+b,0)||1;
+  document.querySelector('#pGroupStats').innerHTML=`<table><tr><th>조</th><th>출현</th><th>비율</th><th>미출현</th></tr>${
+    groups.map((v,i)=>`<tr><td>${i+1}조</td><td>${v}</td><td>${(v/total*100).toFixed(1)}%</td><td>${pModel.groupGap[i]}회</td></tr>`).join('')
+  }</table>`;
+}
+function pGenerate(){
+  if(!pModel){alert('먼저 연금 데이터를 불러오세요.');return}
+  const count=+document.querySelector('#pGames').value,mode=document.querySelector('#pMode').value;
+  const out=pGenerateCandidates(count,mode);
+  document.querySelector('#pRecommendations').innerHTML=out.map((x,i)=>{
+    const digs=[...x.num].map(Number),sum=digs.reduce((a,b)=>a+b,0),odd=digs.filter(d=>d%2).length;
+    return `<div class="pension-ticket"><span class="score">${i+1}위 · ${x.score.toFixed(3)}</span><br>
+      ${digs.map(d=>`<span class="digit">${d}</span>`).join('')} <span class="groupbox">${x.group}조</span>
+      <div class="small">숫자합 ${sum} · 홀짝 ${odd}:${6-odd} · 조 ${x.group}</div></div>`;
+  }).join('');
+  pLog(`${mode} 연금 추천 ${count}게임 생성 완료.`);
+}
+function pSuffixMatch(a,b){
+  let c=0;for(let i=5;i>=0;i--){if(a[i]===b[i])c++;else break}return c;
+}
+function pBacktest(){
+  if(pDraws.length<80)return alert('백테스트에 충분한 연금 데이터가 필요합니다.');
+  const rounds=Math.min(+document.querySelector('#pBackRounds').value,pDraws.length-30),start=pDraws.length-rounds;
+  const modes=['balanced','trend','long','overdue'],names={balanced:'균형형',trend:'최근추세형',long:'장기통계형',overdue:'미출현형'};
+  const res=Object.fromEntries(modes.map(m=>[m,{suffix:0,group:0,three:0}]));
+  let rand={suffix:0,group:0,three:0};
+  const box=document.querySelector('#pBacktest');box.textContent='연금 백테스트 계산 중...';
+  setTimeout(()=>{
+    for(let idx=start;idx<pDraws.length;idx++){
+      const train=pDraws.slice(0,idx),target=pDraws[idx],m=pBuildModel(train);
+      for(const mode of modes){
+        const old=pModel;pModel=m;
+        const tickets=pGenerateCandidates(5,mode);pModel=old;
+        let best=0,gmatch=0,three=0;
+        for(const t of tickets){
+          const sm=pSuffixMatch(t.num,target.first);best=Math.max(best,sm);
+          if(t.group===target.group)gmatch=1;if(sm>=3)three=1;
+        }
+        res[mode].suffix+=best;res[mode].group+=gmatch;res[mode].three+=three;
+      }
+      const rng=seeded(target.round*811),rt=Array.from({length:5},()=>pRandomCandidate(rng));
+      let best=0,gmatch=0,three=0;
+      for(const t of rt){const sm=pSuffixMatch(t.num,target.first);best=Math.max(best,sm);if(t.group===target.group)gmatch=1;if(sm>=3)three=1}
+      rand.suffix+=best;rand.group+=gmatch;rand.three+=three;
+    }
+    const rows=modes.map(mode=>({mode,name:names[mode],avg:res[mode].suffix/rounds,group:res[mode].group,three:res[mode].three})).sort((a,b)=>b.avg-a.avg);
+    box.innerHTML=`<table><tr><th>모델</th><th>평균 끝자리 연속일치</th><th>조 일치(5게임)</th><th>3자리+ 일치</th></tr>
+      ${rows.map((r,i)=>`<tr><td>${r.name}${i===0?'<br><span class="small">모델 내 1위</span>':''}</td><td>${r.avg.toFixed(3)}</td><td>${r.group}/${rounds}</td><td>${r.three}/${rounds}</td></tr>`).join('')}
+      <tr><td>랜덤 5게임</td><td>${(rand.suffix/rounds).toFixed(3)}</td><td>${rand.group}/${rounds}</td><td>${rand.three}/${rounds}</td></tr></table>
+      <div class="small" style="margin-top:8px">연금복권은 오른쪽 끝자리부터 연속 일치하는 방식이므로 끝자리 연속일치를 주요 비교지표로 사용합니다.</div>`;
+    pLog(`연금 백테스트 완료: ${rounds}회`);
+  },30);
+}
+document.querySelector('#pLoadBtn').onclick=pLoadRemote;
+document.querySelector('#pCachedBtn').onclick=()=>pUseCached(false);
+document.querySelector('#pGenerateBtn').onclick=pGenerate;
+document.querySelector('#pStatWindow').onchange=pRenderStats;
+document.querySelector('#pBacktestBtn').onclick=pBacktest;
+
+// 모바일 공용 버튼은 현재 탭에 따라 동작
+document.querySelector('#mobileGenerateBtn').onclick=()=>activeLottery==='lotto'?doGenerate():pGenerate();
+document.querySelector('#mobileLoadBtn').onclick=()=>activeLottery==='lotto'?loadRemote():pLoadRemote();
+
+try{if(localStorage.getItem(PENSION_CACHE))pUseCached(true)}catch(e){}
+try{setLotteryTab(localStorage.getItem('lottery_active_tab')||'lotto')}catch(e){setLotteryTab('lotto')}
 
 if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}))}
 try{if(localStorage.getItem(CACHE_KEY))useCached(true)}catch(e){}

@@ -1,6 +1,6 @@
 {
-  "name": "로또 6/45 데이터 분석기 V5",
-  "short_name": "로또분석기 V5",
+  "name": "복권 분석기 V6 - 로또·연금복권",
+  "short_name": "복권분석기 V6",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
