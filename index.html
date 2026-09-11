@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0d1117">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<title>로또 6/45 분석기 V3</title>
+<style>
+:root{
+  --bg:#0d1117;--panel:#161b22;--panel2:#0f141b;--line:#30363d;
+  --txt:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--good:#3fb950;--warn:#d29922;--danger:#f85149;
+}
+*{box-sizing:border-box}
+html{background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",Arial,sans-serif}
+button,select,input{font:inherit}
+.topbar{
+  position:sticky;top:0;z-index:10;background:rgba(13,17,23,.94);backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line);padding:max(10px,env(safe-area-inset-top)) 14px 10px;
+}
+.topbar-inner{max-width:1180px;margin:auto;display:flex;align-items:center;gap:10px}
+.brand{font-weight:900;font-size:18px}.grow{flex:1}
+.badge{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:5px 8px;border-radius:999px}
+.wrap{max-width:1180px;margin:auto;padding:16px 14px calc(30px + env(safe-area-inset-bottom))}
+.hero{padding:10px 2px 16px}.hero h1{font-size:26px;margin:0 0 7px}.hero p{margin:0;color:var(--muted);line-height:1.55}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:15px;box-shadow:0 10px 24px rgba(0,0,0,.12)}
+.span12{grid-column:span 12}.span8{grid-column:span 8}.span6{grid-column:span 6}.span4{grid-column:span 4}
+@media(max-width:860px){.span8,.span6,.span4{grid-column:span 12}.hero h1{font-size:23px}}
+.controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+button,select,input{
+  background:#21262d;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:10px 11px;min-height:42px
+}
+button{cursor:pointer;font-weight:800}
+button.primary{background:#1f6feb;border-color:#1f6feb}
+button.good{background:#238636;border-color:#238636}
+button:disabled{opacity:.55;cursor:not-allowed}
+input{min-width:0}
+.wide{flex:1;min-width:180px}
+.stat{font-size:28px;font-weight:900}.label{font-size:12px;color:var(--muted);margin-bottom:5px}
+.ball{
+  display:inline-flex;align-items:center;justify-content:center;width:39px;height:39px;border-radius:50%;
+  background:#21262d;border:1px solid #484f58;font-weight:900;margin:3px
+}
+.ball.pick{outline:2px solid var(--accent)}.ball.hot{outline:2px solid var(--warn)}
+.result{padding:12px 0;border-bottom:1px solid var(--line)}.result:last-child{border-bottom:0}
+.score{color:var(--accent);font-weight:900}.small{font-size:12px;color:var(--muted);line-height:1.55}
+.note{border-left:3px solid var(--warn);padding-left:10px;color:#c9d1d9}
+.progress{height:8px;background:#21262d;border-radius:999px;overflow:hidden}.progress i{display:block;height:100%;background:var(--accent)}
+table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;border-bottom:1px solid var(--line);text-align:center}th{color:var(--muted)}
+#log{white-space:pre-wrap;max-height:150px;overflow:auto;background:var(--panel2);padding:10px;border-radius:10px;font-family:ui-monospace,Consolas,monospace;font-size:11px}
+.mobile-actions{display:none}
+@media(max-width:600px){
+  .desktop-only{display:none}
+  .mobile-actions{display:flex;position:sticky;bottom:8px;z-index:9;padding:8px;background:rgba(13,17,23,.92);border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(8px);gap:8px}
+  .mobile-actions button{flex:1}
+  .card{padding:13px}
+  .stat{font-size:24px}
+  .ball{width:36px;height:36px}
+}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">로또 분석기 V3</div>
+    <span id="onlineState" class="badge">상태 확인중</span>
+    <div class="grow"></div>
+    <button id="installBtn" style="display:none">홈 화면에 설치</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <h1>로또 6/45 데이터 분석 & 조합 선별</h1>
+    <p>과거 당첨번호의 통계적 특성을 점수화해 실제 구매 가능한 6개 번호 조합을 선별합니다. 모든 유효 조합의 추첨 확률 자체는 동일합니다.</p>
+  </section>
+
+  <div class="grid">
+    <section class="card span12">
+      <div class="controls">
+        <button class="primary" id="loadBtn">최신 데이터 갱신</button>
+        <button id="cachedBtn">저장 데이터 사용</button>
+        <label class="badge" style="cursor:pointer">JSON 불러오기<input id="fileInput" type="file" accept=".json" style="display:none"></label>
+        <div class="grow"></div>
+        <span id="status" class="small">데이터 미로드</span>
+      </div>
+    </section>
+
+    <section class="card span4"><div class="label">로드된 회차</div><div class="stat" id="drawCount">-</div></section>
+    <section class="card span4"><div class="label">최신 회차</div><div class="stat" id="latestDraw">-</div></section>
+    <section class="card span4"><div class="label">최신 당첨번호</div><div id="latestBalls">-</div></section>
+
+    <section class="card span8">
+      <div class="controls">
+        <h3 style="margin:0">추천 조합</h3><div class="grow"></div>
+        <select id="mode">
+          <option value="balanced">균형형</option>
+          <option value="trend">최근 추세형</option>
+          <option value="long">장기 통계형</option>
+          <option value="overdue">장기 미출현형</option>
+        </select>
+        <select id="games"><option>5</option><option>10</option><option>20</option></select>
+        <select id="searchMode">
+          <option value="exhaustive">전체 8,145,060개 전수분석</option>
+          <option value="fast">빠른 후보탐색</option>
+        </select>
+        <button class="primary desktop-only" id="generateBtn">조합 생성</button>
+      </div>
+
+      <div class="controls" style="margin-top:10px">
+        <input id="includeNums" class="wide" placeholder="고정수 예: 7, 21">
+        <input id="excludeNums" class="wide" placeholder="제외수 예: 1, 45">
+      </div>
+
+      <div id="progressWrap" style="display:none;margin-top:12px">
+        <div class="small" id="progressText">분석 준비중...</div>
+        <div class="progress" style="margin-top:6px"><i id="progressBar" style="width:0%"></i></div>
+      </div>
+
+      <div id="recommendations" style="margin-top:10px" class="small">데이터를 불러온 뒤 조합을 생성하세요.</div>
+    </section>
+
+    <section class="card span4">
+      <h3 style="margin-top:0">분석 기준</h3>
+      <div class="small">
+        누적 출현 빈도, 최근 20/50/100회 빈도, 미출현 간격, 번호쌍 동반출현을 점수화합니다.
+        조합 수준에서는 홀짝, 저·고 구간, 합계, 연속수, 끝수 중복, 직전 회차 중복을 과도하지 않게 보정합니다.
+      </div>
+      <div class="note small" style="margin-top:12px">
+        자주 나온 번호나 오래 안 나온 번호가 다음 회차에 더 잘 나온다는 보장은 없습니다. 이 앱은 예측 보장이 아니라 조합 필터링/분석 도구입니다.
+      </div>
+    </section>
+
+    <section class="card span6">
+      <div class="controls"><h3 style="margin:0">번호 통계 TOP 15</h3><div class="grow"></div>
+        <select id="rankMetric">
+          <option value="score">종합점수</option><option value="all">누적빈도</option><option value="r20">최근20회</option>
+          <option value="r50">최근50회</option><option value="gap">미출현</option>
+        </select>
+      </div>
+      <div id="rankTable" style="margin-top:10px"></div>
+    </section>
+
+    <section class="card span6">
+      <div class="controls"><h3 style="margin:0">백테스트</h3><div class="grow"></div>
+        <select id="backRounds"><option value="30">최근 30회</option><option value="50">최근 50회</option><option value="100">최근 100회</option></select>
+        <button id="backtestBtn">실행</button>
+      </div>
+      <div id="backtest" class="small" style="margin-top:10px">
+        각 회차 직전 데이터만 사용해 후보 5게임을 만들고 실제 결과와 비교합니다.
+      </div>
+    </section>
+
+    <section class="card span12">
+      <h3 style="margin-top:0">로그</h3><div id="log">준비됨.</div>
+    </section>
+  </div>
+
+  <div class="mobile-actions">
+    <button class="primary" id="mobileGenerateBtn">조합 생성</button>
+    <button id="mobileLoadBtn">데이터 갱신</button>
+  </div>
+</main>
+
+<script>
+const DATA_URL='https://smok95.github.io/lotto/results/all.json';
+const CACHE_KEY='lotto645_draws_v3';
+let draws=[], model=null, deferredPrompt=null;
+
+window.addEventListener('beforeinstallprompt', e=>{
+  e.preventDefault(); deferredPrompt=e;
+  document.querySelector('#installBtn').style.display='inline-block';
+});
+document.querySelector('#installBtn').onclick=async()=>{
+  if(!deferredPrompt)return;
+  deferredPrompt.prompt(); await deferredPrompt.userChoice; deferredPrompt=null;
+  document.querySelector('#installBtn').style.display='none';
+};
+
+function updateOnlineState(){
+  const el=document.querySelector('#onlineState');
+  el.textContent=navigator.onLine?'온라인':'오프라인';
+}
+window.addEventListener('online',updateOnlineState);window.addEventListener('offline',updateOnlineState);updateOnlineState();
+
+function log(s){const e=document.querySelector('#log');e.textContent+='\\n'+s;e.scrollTop=e.scrollHeight}
+function mean(a){return a.reduce((x,y)=>x+y,0)/Math.max(a.length,1)}
+function std(a){let m=mean(a);return Math.sqrt(mean(a.map(x=>(x-m)**2)))||1}
+function z(v,a){return (v-mean(a))/std(a)}
+function parseNums(s){return [...new Set((s.match(/\d+/g)||[]).map(Number).filter(n=>n>=1&&n<=45))]}
+function ball(n,c=''){return `<span class="ball ${c}">${n}</span>`}
+
+function normalizeDraws(j){
+  if(!Array.isArray(j)) return [];
+  return j.map((d,i)=>({
+    draw_no:+(d.draw_no ?? d.drwNo ?? d.round ?? i+1),
+    numbers:(d.numbers ?? [d.drwtNo1,d.drwtNo2,d.drwtNo3,d.drwtNo4,d.drwtNo5,d.drwtNo6]).map(Number),
+    bonus_no:+(d.bonus_no ?? d.bnusNo ?? 0),
+    date:String(d.date ?? d.drwNoDate ?? '')
+  })).filter(d=>Number.isFinite(d.draw_no)&&Array.isArray(d.numbers)&&d.numbers.length===6&&d.numbers.every(n=>n>=1&&n<=45));
+}
+
+function buildModel(ds){
+  const N=ds.length, nums=[...Array(45)].map((_,i)=>i+1);
+  const freq=Object.fromEntries(nums.map(n=>[n,0]));
+  ds.forEach(d=>d.numbers.forEach(n=>freq[n]++));
+  const rec=w=>{const o=Object.fromEntries(nums.map(n=>[n,0]));ds.slice(-Math.min(w,N)).forEach(d=>d.numbers.forEach(n=>o[n]++));return o};
+  const r20=rec(20),r50=rec(50),r100=rec(100),gap={};
+  nums.forEach(n=>{let g=N;for(let i=N-1;i>=0;i--){if(ds[i].numbers.includes(n)){g=N-1-i;break}}gap[n]=g});
+  const pairs={};ds.forEach(d=>{for(let i=0;i<6;i++)for(let j=i+1;j<6;j++){let a=d.numbers[i],b=d.numbers[j];if(a>b)[a,b]=[b,a];let k=a+'-'+b;pairs[k]=(pairs[k]||0)+1}});
+  return {N,freq,r20,r50,r100,gap,pairs,latest:ds[N-1]};
+}
+
+function modeWeights(mode){
+  if(mode==='trend')return{all:.08,r20:.38,r50:.30,r100:.16,gap:.08};
+  if(mode==='long')return{all:.42,r20:.08,r50:.12,r100:.23,gap:.15};
+  if(mode==='overdue')return{all:.12,r20:.10,r50:.13,r100:.15,gap:.50};
+  return{all:.20,r20:.25,r50:.22,r100:.18,gap:.15};
+}
+function rescoreNumbers(m,mode){
+  const nums=[...Array(45)].map((_,i)=>i+1),w=modeWeights(mode);
+  const A={freq:nums.map(n=>m.freq[n]),r20:nums.map(n=>m.r20[n]),r50:nums.map(n=>m.r50[n]),r100:nums.map(n=>m.r100[n]),gap:nums.map(n=>m.gap[n])};
+  const s={};nums.forEach(n=>s[n]=w.all*z(m.freq[n],A.freq)+w.r20*z(m.r20[n],A.r20)+w.r50*z(m.r50[n],A.r50)+w.r100*z(m.r100[n],A.r100)+w.gap*z(m.gap[n],A.gap));
+  return s;
+}
+function comboFeatures(c,m){
+  const odd=c.filter(x=>x%2).length,low=c.filter(x=>x<=22).length,sum=c.reduce((a,b)=>a+b,0);
+  let consecutive=0;for(let i=1;i<6;i++)if(c[i]-c[i-1]===1)consecutive++;
+  const endings={};c.forEach(x=>endings[x%10]=(endings[x%10]||0)+1);
+  const dupEnd=Math.max(...Object.values(endings)),prev=c.filter(x=>m.latest.numbers.includes(x)).length;
+  let pairScore=0;for(let i=0;i<6;i++)for(let j=i+1;j<6;j++)pairScore+=m.pairs[c[i]+'-'+c[j]]||0;
+  return{odd,low,sum,consecutive,dupEnd,prev,pairScore};
+}
+function scoreCombo(c,m,mode){
+  const ns=rescoreNumbers(m,mode);let s=mean(c.map(n=>ns[n])),f=comboFeatures(c,m);
+  s+=(f.odd===3?.42:(f.odd===2||f.odd===4?.20:-.25));
+  s+=(f.low===3?.35:(f.low===2||f.low===4?.15:-.18));
+  s+=Math.max(-.65,.35-Math.abs(f.sum-138)/42);
+  s+=f.consecutive<=1?.12:-.20*f.consecutive;
+  s+=f.dupEnd<=2?.12:-.18*(f.dupEnd-2);
+  s+=f.prev<=2?.12:-.25*(f.prev-2);
+  s+=Math.min(.35,f.pairScore/Math.max(m.N,1)*2.2);
+  return s;
+}
+function seeded(seed){let x=seed|0;return()=>((x=Math.imul(1664525,x)+1013904223|0)>>>0)/4294967296}
+function randomCombo(rng,include=[],exclude=[]){
+  const ex=new Set(exclude),a=[...include],pool=[...Array(45)].map((_,i)=>i+1).filter(n=>!ex.has(n)&&!a.includes(n));
+  while(a.length<6&&pool.length){const i=Math.floor(rng()*pool.length);a.push(pool.splice(i,1)[0])}return a.sort((x,y)=>x-y);
+}
+function generateTop(ds,m,mode,count,include=[],exclude=[],seed=20260911){
+  const rng=seeded(seed),seen=new Set(),cand=[],samples=Math.max(16000,count*3500);
+  for(let i=0;i<samples;i++){const c=randomCombo(rng,include,exclude);if(c.length<6)continue;const k=c.join(',');if(seen.has(k))continue;seen.add(k);cand.push({c,score:scoreCombo(c,m,mode)})}
+  cand.sort((a,b)=>b.score-a.score);
+  const out=[];for(const x of cand){if(out.every(y=>y.c.filter(n=>x.c.includes(n)).length<=4)){out.push(x);if(out.length>=count)break}}return out;
+}
+
+function setData(ds,label='데이터'){
+  draws=normalizeDraws(ds).sort((a,b)=>a.draw_no-b.draw_no);
+  if(!draws.length){alert('유효한 회차 데이터를 찾지 못했습니다.');return}
+  model=buildModel(draws);const L=model.latest;
+  document.querySelector('#drawCount').textContent=draws.length+'회';
+  document.querySelector('#latestDraw').textContent=L.draw_no+'회';
+  document.querySelector('#latestBalls').innerHTML=L.numbers.map(n=>ball(n)).join('');
+  document.querySelector('#status').textContent=`${label} · ${L.draw_no}회 ${L.date?('('+L.date.slice(0,10)+')'):''}`;
+  localStorage.setItem(CACHE_KEY,JSON.stringify(draws));
+  renderRanking();log(`${label} 로드 완료: ${draws.length}회 / 최신 ${L.draw_no}회`);
+}
+async function loadRemote(){
+  document.querySelector('#status').textContent='최신 데이터 불러오는 중...';
+  try{const r=await fetch(DATA_URL,{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);setData(await r.json(),'온라인 최신 데이터')}
+  catch(e){log('온라인 갱신 실패: '+e.message);useCached(true)}
+}
+function useCached(silent=false){
+  try{const raw=localStorage.getItem(CACHE_KEY);if(!raw)throw new Error('저장 데이터 없음');setData(JSON.parse(raw),'기기 저장 데이터')}
+  catch(e){if(!silent)alert('저장된 데이터가 없습니다. 먼저 온라인에서 한 번 갱신하세요.');document.querySelector('#status').textContent='저장 데이터 없음'}
+}
+function renderRanking(){
+  if(!model)return;const metric=document.querySelector('#rankMetric').value,ns=rescoreNumbers(model,document.querySelector('#mode').value);
+  let rows=[...Array(45)].map((_,i)=>i+1).map(n=>({n,score:ns[n],all:model.freq[n],r20:model.r20[n],r50:model.r50[n],gap:model.gap[n]}));
+  rows.sort((a,b)=>metric==='score'?b.score-a.score:b[metric]-a[metric]);rows=rows.slice(0,15);
+  document.querySelector('#rankTable').innerHTML=`<table><thead><tr><th>#</th><th>번호</th><th>종합</th><th>누적</th><th>20회</th><th>50회</th><th>미출현</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${ball(r.n,'hot')}</td><td>${r.score.toFixed(2)}</td><td>${r.all}</td><td>${r.r20}</td><td>${r.r50}</td><td>${r.gap}</td></tr>`).join('')}</tbody></table>`;
+}
+function renderTickets(top,count){
+  const out=[];for(const x of top){if(out.every(y=>y.c.filter(n=>x.c.includes(n)).length<=4)){out.push(x);if(out.length>=count)break}}
+  document.querySelector('#recommendations').innerHTML=out.map((x,i)=>{const f=comboFeatures(x.c,model);return `<div class="result"><span class="score">${i+1}위 · ${x.score.toFixed(3)}</span><br>${x.c.map(n=>ball(n,'pick')).join('')}<div class="small">합 ${f.sum} · 홀짝 ${f.odd}:${6-f.odd} · 저/고 ${f.low}:${6-f.low} · 직전중복 ${f.prev} · 연속쌍 ${f.consecutive}</div></div>`}).join('');
+}
+
+function makeWorker(){
+  const code=`
+  let heap=[];
+  function up(i){while(i){let p=(i-1)>>1;if(heap[p].score<=heap[i].score)break;[heap[p],heap[i]]=[heap[i],heap[p]];i=p}}
+  function down(i){for(;;){let l=i*2+1,r=l+1,s=i;if(l<heap.length&&heap[l].score<heap[s].score)s=l;if(r<heap.length&&heap[r].score<heap[s].score)s=r;if(s===i)break;[heap[s],heap[i]]=[heap[i],heap[s]];i=s}}
+  function push(x,limit){if(heap.length<limit){heap.push(x);up(heap.length-1);return}if(x.score<=heap[0].score)return;heap[0]=x;down(0)}
+  onmessage=e=>{
+    const {numScore,pairFlat,latest,include,exclude,limit,N}=e.data,inc=new Set(include),exc=new Set(exclude),prev=new Set(latest);
+    heap=[];let checked=0,accepted=0,last=-1;
+    for(let a=1;a<=40;a++){if(exc.has(a))continue;
+      for(let b=a+1;b<=41;b++){if(exc.has(b))continue;
+        for(let c=b+1;c<=42;c++){if(exc.has(c))continue;
+          for(let d=c+1;d<=43;d++){if(exc.has(d))continue;
+            for(let e1=d+1;e1<=44;e1++){if(exc.has(e1))continue;
+              for(let f=e1+1;f<=45;f++){checked++;if(exc.has(f))continue;const ar=[a,b,c,d,e1,f];
+                let ok=true;for(const q of inc)if(!ar.includes(q)){ok=false;break}if(!ok)continue;accepted++;
+                const odd=(a&1)+(b&1)+(c&1)+(d&1)+(e1&1)+(f&1),low=(a<=22)+(b<=22)+(c<=22)+(d<=22)+(e1<=22)+(f<=22),sum=a+b+c+d+e1+f;
+                let con=0;if(b-a===1)con++;if(c-b===1)con++;if(d-c===1)con++;if(e1-d===1)con++;if(f-e1===1)con++;
+                const ends=new Array(10).fill(0);for(const n of ar)ends[n%10]++;const dup=Math.max(...ends);
+                let pv=0;for(const n of ar)if(prev.has(n))pv++;
+                let ps=0;for(let i=0;i<6;i++)for(let j=i+1;j<6;j++)ps+=pairFlat[ar[i]*46+ar[j]]||0;
+                let s=(numScore[a]+numScore[b]+numScore[c]+numScore[d]+numScore[e1]+numScore[f])/6;
+                s+=(odd===3?.42:(odd===2||odd===4?.20:-.25));s+=(low===3?.35:(low===2||low===4?.15:-.18));
+                s+=Math.max(-.65,.35-Math.abs(sum-138)/42);s+=con<=1?.12:-.20*con;s+=dup<=2?.12:-.18*(dup-2);s+=pv<=2?.12:-.25*(pv-2);s+=Math.min(.35,ps/Math.max(N,1)*2.2);
+                push({c:ar,score:s},limit);
+                if((checked%120000)===0){const pct=Math.floor(checked/8145060*100);if(pct!==last){last=pct;postMessage({type:'progress',pct,checked})}}
+              }
+            }
+          }
+        }
+      }
+    }
+    heap.sort((x,y)=>y.score-x.score);postMessage({type:'done',items:heap,checked,accepted});
+  }`;
+  return new Worker(URL.createObjectURL(new Blob([code],{type:'text/javascript'})));
+}
+
+function doGenerate(){
+  if(!model){alert('먼저 데이터를 불러오세요.');return}
+  const mode=document.querySelector('#mode').value,count=+document.querySelector('#games').value;
+  const inc=parseNums(document.querySelector('#includeNums').value),exc=parseNums(document.querySelector('#excludeNums').value);
+  if(inc.length>6)return alert('고정수는 6개 이하여야 합니다.');
+  if(inc.some(n=>exc.includes(n)))return alert('고정수와 제외수가 겹칩니다.');
+  if(document.querySelector('#searchMode').value==='fast'){renderTickets(generateTop(draws,model,mode,count,inc,exc,model.latest.draw_no*7919),count);log('빠른 후보탐색 완료.');return}
+
+  const ns=rescoreNumbers(model,mode),numScore=new Array(46).fill(0);for(let n=1;n<=45;n++)numScore[n]=ns[n];
+  const pairFlat=new Array(46*46).fill(0);for(const [k,v] of Object.entries(model.pairs)){const[a,b]=k.split('-').map(Number);pairFlat[a*46+b]=v}
+  const wrap=document.querySelector('#progressWrap'),bar=document.querySelector('#progressBar'),pt=document.querySelector('#progressText');
+  wrap.style.display='block';bar.style.width='0%';pt.textContent='전체 8,145,060개 전수분석 시작...';
+  document.querySelector('#generateBtn').disabled=true;document.querySelector('#mobileGenerateBtn').disabled=true;
+  const w=makeWorker();w.onmessage=ev=>{const d=ev.data;if(d.type==='progress'){bar.style.width=d.pct+'%';pt.textContent=`전수분석 ${d.pct}% · ${d.checked.toLocaleString()}개 확인`}
+    else{bar.style.width='100%';pt.textContent=`완료 · ${d.checked.toLocaleString()}개 확인`;renderTickets(d.items,count);document.querySelector('#generateBtn').disabled=false;document.querySelector('#mobileGenerateBtn').disabled=false;log(`전수분석 완료 / 조건통과 ${d.accepted.toLocaleString()}개`);w.terminate()}};
+  w.onerror=e=>{pt.textContent='분석 오류: '+e.message;document.querySelector('#generateBtn').disabled=false;document.querySelector('#mobileGenerateBtn').disabled=false};
+  w.postMessage({numScore,pairFlat,latest:model.latest.numbers,include:inc,exclude:exc,limit:Math.max(600,count*100),N:model.N});
+}
+function maxMatch(tickets,winning){return Math.max(...tickets.map(t=>t.c.filter(n=>winning.includes(n)).length))}
+function runBacktest(){
+  if(draws.length<120)return alert('백테스트에는 충분한 전체 데이터가 필요합니다.');
+  const n=Math.min(+document.querySelector('#backRounds').value,draws.length-100),mode=document.querySelector('#mode').value;
+  let H=[0,0,0,0,0,0,0],R=[0,0,0,0,0,0,0],hs=0,rs=0,start=draws.length-n;
+  for(let idx=start;idx<draws.length;idx++){
+    const tr=draws.slice(0,idx),m=buildModel(tr),target=draws[idx].numbers,t=generateTop(tr,m,mode,5,[],[],draws[idx].draw_no*3571);
+    const mm=maxMatch(t,target);H[mm]++;hs+=mm;const rng=seeded(draws[idx].draw_no*811),rt=[0,1,2,3,4].map(()=>({c:randomCombo(rng)})),rm=maxMatch(rt,target);R[rm]++;rs+=rm;
+  }
+  const ge=(a,k)=>a.slice(k).reduce((x,y)=>x+y,0);
+  document.querySelector('#backtest').innerHTML=`<table><tr><th></th><th>분석모델</th><th>랜덤 5게임</th></tr><tr><td>평균 최대일치</td><td>${(hs/n).toFixed(2)}</td><td>${(rs/n).toFixed(2)}</td></tr><tr><td>3개 이상</td><td>${ge(H,3)}/${n}</td><td>${ge(R,3)}/${n}</td></tr><tr><td>4개 이상</td><td>${ge(H,4)}/${n}</td><td>${ge(R,4)}/${n}</td></tr><tr><td>5개 이상</td><td>${ge(H,5)}/${n}</td><td>${ge(R,5)}/${n}</td></tr></table>`;
+  log(`백테스트 완료: 최근 ${n}회`);
+}
+
+document.querySelector('#loadBtn').onclick=loadRemote;document.querySelector('#mobileLoadBtn').onclick=loadRemote;
+document.querySelector('#cachedBtn').onclick=()=>useCached(false);
+document.querySelector('#generateBtn').onclick=doGenerate;document.querySelector('#mobileGenerateBtn').onclick=doGenerate;
+document.querySelector('#backtestBtn').onclick=runBacktest;
+document.querySelector('#rankMetric').onchange=renderRanking;document.querySelector('#mode').onchange=renderRanking;
+document.querySelector('#fileInput').onchange=async e=>{try{setData(JSON.parse(await e.target.files[0].text()),'사용자 JSON')}catch(err){alert('JSON 형식을 확인하세요.')}};
+
+if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}))}
+try{if(localStorage.getItem(CACHE_KEY))useCached(true)}catch(e){}
+</script>
+</body>
+</html>
