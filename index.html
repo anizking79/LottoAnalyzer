@@ -85,7 +85,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand">복권 분석기 V6</div>
+    <div class="brand">복권 분석기 V6.2</div>
     <span id="onlineState" class="badge">상태 확인중</span>
     <div class="grow"></div>
     <button id="installBtn" style="display:none">홈 화면에 설치</button>
@@ -221,7 +221,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
           <option value="long">장기 통계형</option>
           <option value="overdue">장기 미출현형</option>
         </select>
-        <select id="pGames"><option>5</option><option>10</option><option>20</option></select>
+        <select id="pGames"><option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option><option>10</option><option>20</option></select>
         <button class="primary" id="pGenerateBtn">번호 생성</button>
       </div>
       <div class="small" style="margin-top:9px">
@@ -962,38 +962,175 @@ function pGenerate(){
 function pSuffixMatch(a,b){
   let c=0;for(let i=5;i>=0;i--){if(a[i]===b[i])c++;else break}return c;
 }
-function pBacktest(){
-  if(pDraws.length<80)return alert('백테스트에 충분한 연금 데이터가 필요합니다.');
-  const rounds=Math.min(+document.querySelector('#pBackRounds').value,pDraws.length-30),start=pDraws.length-rounds;
-  const modes=['balanced','trend','long','overdue'],names={balanced:'균형형',trend:'최근추세형',long:'장기통계형',overdue:'미출현형'};
-  const res=Object.fromEntries(modes.map(m=>[m,{suffix:0,group:0,three:0}]));
-  let rand={suffix:0,group:0,three:0};
-  const box=document.querySelector('#pBacktest');box.textContent='연금 백테스트 계산 중...';
-  setTimeout(()=>{
-    for(let idx=start;idx<pDraws.length;idx++){
-      const train=pDraws.slice(0,idx),target=pDraws[idx],m=pBuildModel(train);
-      for(const mode of modes){
-        const old=pModel;pModel=m;
-        const tickets=pGenerateCandidates(5,mode);pModel=old;
+
+function makePensionBacktestWorker(){
+  const code=`
+  function mean(a){return a.reduce((x,y)=>x+y,0)/Math.max(a.length,1)}
+  function std(a){let m=mean(a);return Math.sqrt(mean(a.map(x=>(x-m)*(x-m))))||1}
+  function z(v,a){return(v-mean(a))/std(a)}
+  function seeded(seed){let x=seed|0;return()=>((x=Math.imul(1664525,x)+1013904223|0)>>>0)/4294967296}
+  function modeWeights(mode){
+    if(mode==='trend')return{all:.08,r20:.40,r50:.30,r100:.17,gap:.05};
+    if(mode==='long')return{all:.48,r20:.07,r50:.10,r100:.25,gap:.10};
+    if(mode==='overdue')return{all:.10,r20:.08,r50:.10,r100:.12,gap:.60};
+    return{all:.22,r20:.25,r50:.22,r100:.18,gap:.13};
+  }
+  const MODES=['balanced','trend','long','overdue'];
+
+  function build(ds){
+    const N=ds.length,groups=Array(5).fill(0),pos=Array.from({length:6},()=>Array(10).fill(0));
+    function rec(w){
+      const p=Array.from({length:6},()=>Array(10).fill(0)),g=Array(5).fill(0);
+      for(const d of ds.slice(-Math.min(w,N))){g[d.group-1]++;for(let i=0;i<6;i++)p[i][+d.first[i]]++}
+      return{p,g};
+    }
+    for(const d of ds){groups[d.group-1]++;for(let i=0;i<6;i++)pos[i][+d.first[i]]++}
+    const r20=rec(20),r50=rec(50),r100=rec(100);
+    const gap=Array.from({length:6},()=>Array(10).fill(N));
+    for(let p=0;p<6;p++)for(let dig=0;dig<10;dig++){
+      for(let i=N-1;i>=0;i--){if(+ds[i].first[p]===dig){gap[p][dig]=N-1-i;break}}
+    }
+    const groupGap=Array(5).fill(N);
+    for(let g=1;g<=5;g++)for(let i=N-1;i>=0;i--){if(ds[i].group===g){groupGap[g-1]=N-1-i;break}}
+
+    const digitScores={},groupScores={};
+    for(const mode of MODES){
+      const w=modeWeights(mode),dscores=Array.from({length:6},()=>Array(10).fill(0)),gs=Array(5).fill(0);
+      for(let p=0;p<6;p++){
+        for(let d=0;d<10;d++){
+          dscores[p][d]=w.all*z(pos[p][d],pos[p])+w.r20*z(r20.p[p][d],r20.p[p])+w.r50*z(r50.p[p][d],r50.p[p])+w.r100*z(r100.p[p][d],r100.p[p])+w.gap*z(gap[p][d],gap[p]);
+        }
+      }
+      for(let i=0;i<5;i++){
+        gs[i]=w.all*z(groups[i],groups)+w.r20*z(r20.g[i],r20.g)+w.r50*z(r50.g[i],r50.g)+w.r100*z(r100.g[i],r100.g)+w.gap*z(groupGap[i],groupGap);
+      }
+      digitScores[mode]=dscores;groupScores[mode]=gs;
+    }
+    return{digitScores,groupScores};
+  }
+
+  function randomCandidate(rng){
+    const group=1+Math.floor(rng()*5);
+    let num='';for(let i=0;i<6;i++)num+=Math.floor(rng()*10);
+    return{group,num};
+  }
+  function scoreCandidate(x,stats,mode){
+    const digs=[...x.num].map(Number),ds=stats.digitScores[mode],gs=stats.groupScores[mode];
+    const stat=(gs[x.group-1]+digs.reduce((s,d,i)=>s+ds[i][d],0)/6)/2;
+    const sum=digs.reduce((a,b)=>a+b,0),odd=digs.filter(v=>v%2).length;
+    const counts=Array(10).fill(0);for(const d of digs)counts[d]++;
+    const maxRep=Math.max(...counts);
+    let structure=0;
+    structure+=odd===3?.42:(odd===2||odd===4?.20:-.20);
+    structure+=Math.max(-.55,.32-Math.abs(sum-27)/28);
+    structure+=maxRep<=2?.20:-.25*(maxRep-2);
+    return stat*.35+structure*.65;
+  }
+  function suffixMatch(a,b){
+    let c=0;for(let i=5;i>=0;i--){if(a[i]===b[i])c++;else break}return c;
+  }
+  function top5FromPool(pool,stats,mode){
+    const cand=pool.map(x=>({...x,score:scoreCandidate(x,stats,mode)})).sort((a,b)=>b.score-a.score);
+    const out=[],groupUse=Array(5).fill(0),digitUse=Array.from({length:6},()=>Array(10).fill(0));
+    const scored=cand.slice(0,Math.min(250,cand.length)).map(x=>{
+      let penalty=groupUse[x.group-1]*.12;
+      for(let p=0;p<6;p++)penalty+=digitUse[p][+x.num[p]]*.04;
+      return {...x,adj:x.score-penalty};
+    }).sort((a,b)=>b.adj-a.adj);
+    for(const x of scored){
+      out.push(x);groupUse[x.group-1]++;for(let p=0;p<6;p++)digitUse[p][+x.num[p]]++;
+      if(out.length>=5)break;
+    }
+    return out;
+  }
+
+  onmessage=e=>{
+    const {draws,rounds,samples}=e.data;
+    const n=Math.min(rounds,draws.length-30),start=draws.length-n;
+    const res={};
+    for(const mode of MODES)res[mode]={suffix:0,group:0,three:0};
+    const rand={suffix:0,group:0,three:0};
+
+    for(let idx=start;idx<draws.length;idx++){
+      const train=draws.slice(0,idx),target=draws[idx],stats=build(train);
+      const rng=seeded(target.round*9277),seen=new Set(),pool=[];
+      for(let i=0;i<samples;i++){
+        const x=randomCandidate(rng),k=x.group+'-'+x.num;
+        if(seen.has(k))continue;seen.add(k);pool.push(x);
+      }
+
+      for(const mode of MODES){
+        const tickets=top5FromPool(pool,stats,mode);
         let best=0,gmatch=0,three=0;
         for(const t of tickets){
-          const sm=pSuffixMatch(t.num,target.first);best=Math.max(best,sm);
+          const sm=suffixMatch(t.num,target.first);if(sm>best)best=sm;
           if(t.group===target.group)gmatch=1;if(sm>=3)three=1;
         }
         res[mode].suffix+=best;res[mode].group+=gmatch;res[mode].three+=three;
       }
-      const rng=seeded(target.round*811),rt=Array.from({length:5},()=>pRandomCandidate(rng));
+
+      const rr=seeded(target.round*811),rt=Array.from({length:5},()=>randomCandidate(rr));
       let best=0,gmatch=0,three=0;
-      for(const t of rt){const sm=pSuffixMatch(t.num,target.first);best=Math.max(best,sm);if(t.group===target.group)gmatch=1;if(sm>=3)three=1}
+      for(const t of rt){
+        const sm=suffixMatch(t.num,target.first);if(sm>best)best=sm;
+        if(t.group===target.group)gmatch=1;if(sm>=3)three=1;
+      }
       rand.suffix+=best;rand.group+=gmatch;rand.three+=three;
+
+      const done=idx-start+1;
+      postMessage({type:'progress',done,total:n,pct:Math.floor(done/n*100)});
     }
-    const rows=modes.map(mode=>({mode,name:names[mode],avg:res[mode].suffix/rounds,group:res[mode].group,three:res[mode].three})).sort((a,b)=>b.avg-a.avg);
-    box.innerHTML=`<table><tr><th>모델</th><th>평균 끝자리 연속일치</th><th>조 일치(5게임)</th><th>3자리+ 일치</th></tr>
-      ${rows.map((r,i)=>`<tr><td>${r.name}${i===0?'<br><span class="small">모델 내 1위</span>':''}</td><td>${r.avg.toFixed(3)}</td><td>${r.group}/${rounds}</td><td>${r.three}/${rounds}</td></tr>`).join('')}
-      <tr><td>랜덤 5게임</td><td>${(rand.suffix/rounds).toFixed(3)}</td><td>${rand.group}/${rounds}</td><td>${rand.three}/${rounds}</td></tr></table>
-      <div class="small" style="margin-top:8px">연금복권은 오른쪽 끝자리부터 연속 일치하는 방식이므로 끝자리 연속일치를 주요 비교지표로 사용합니다.</div>`;
-    pLog(`연금 백테스트 완료: ${rounds}회`);
-  },30);
+    postMessage({type:'done',res,rand,n});
+  }`;
+  return new Worker(URL.createObjectURL(new Blob([code],{type:'text/javascript'})));
+}
+
+function pBacktest(){
+  if(pDraws.length<80)return alert('백테스트에 충분한 연금 데이터가 필요합니다.');
+  const rounds=Math.min(+document.querySelector('#pBackRounds').value,pDraws.length-30);
+  const box=document.querySelector('#pBacktest'),btn=document.querySelector('#pBacktestBtn');
+  btn.disabled=true;
+
+  box.innerHTML=`<div class="small">연금 백테스트 준비중...</div>
+    <div class="progress" style="margin-top:8px"><i id="pBtBar" style="width:0%"></i></div>
+    <div class="small" id="pBtText" style="margin-top:7px">0 / ${rounds}</div>`;
+
+  const samples=rounds<=50?5000:(rounds<=100?3500:(rounds<=200?2400:1600));
+  const w=makePensionBacktestWorker();
+
+  w.onmessage=ev=>{
+    const d=ev.data;
+    if(d.type==='progress'){
+      const bar=document.querySelector('#pBtBar'),t=document.querySelector('#pBtText');
+      if(bar)bar.style.width=d.pct+'%';
+      if(t)t.textContent=`${d.done} / ${d.total} 회차 분석 · ${d.pct}%`;
+    }else{
+      const names={balanced:'균형형',trend:'최근추세형',long:'장기통계형',overdue:'미출현형'};
+      const rows=Object.entries(d.res).map(([mode,r])=>({
+        mode,name:names[mode],avg:r.suffix/d.n,group:r.group,three:r.three
+      })).sort((a,b)=>b.avg-a.avg);
+
+      box.innerHTML=`<table>
+        <tr><th>모델</th><th>평균 끝자리 연속일치</th><th>조 일치(5게임)</th><th>3자리+ 일치</th></tr>
+        ${rows.map((r,i)=>`<tr>
+          <td>${r.name}${i===0?'<br><span class="small">모델 내 1위</span>':''}</td>
+          <td>${r.avg.toFixed(3)}</td><td>${r.group}/${d.n}</td><td>${r.three}/${d.n}</td>
+        </tr>`).join('')}
+        <tr><td>랜덤 5게임</td><td>${(d.rand.suffix/d.n).toFixed(3)}</td><td>${d.rand.group}/${d.n}</td><td>${d.rand.three}/${d.n}</td></tr>
+      </table>
+      <div class="small" style="margin-top:8px">
+        연금복권은 오른쪽 끝자리부터 연속 일치하는 방식이므로 끝자리 연속일치를 주요 비교지표로 사용합니다.
+      </div>`;
+      btn.disabled=false;pLog(`연금 백테스트 완료: ${d.n}회`);w.terminate();
+    }
+  };
+
+  w.onerror=e=>{
+    box.innerHTML=`<div class="small">연금 백테스트 오류: ${e.message}</div>`;
+    btn.disabled=false;pLog('연금 백테스트 오류: '+e.message);w.terminate();
+  };
+
+  w.postMessage({draws:pDraws,rounds,samples});
 }
 document.querySelector('#pLoadBtn').onclick=pLoadRemote;
 document.querySelector('#pCachedBtn').onclick=()=>pUseCached(false);
