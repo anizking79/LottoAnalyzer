@@ -80,12 +80,18 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
   .digit{width:30px;height:36px}
   .pension-grid{grid-template-columns:repeat(3,1fr)}
 }
+
+.group-mode-wrap{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.group-mode-label{font-size:12px;color:var(--muted);margin-right:2px}
+.group-mode-btn{min-height:38px;padding:8px 12px;background:#21262d;border:1px solid var(--line);border-radius:9px;color:var(--txt);font-weight:800;cursor:pointer}
+.group-mode-btn.active{background:#6e2bd9;border-color:#a371f7}
+#pManualGroup{min-height:38px;padding:8px 10px}
 </style>
 </head>
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand">복권 분석기 V6.2</div>
+    <div class="brand">복권 분석기 V6.3.3</div>
     <span id="onlineState" class="badge">상태 확인중</span>
     <div class="grow"></div>
     <button id="installBtn" style="display:none">홈 화면에 설치</button>
@@ -224,6 +230,18 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
         <select id="pGames"><option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option><option>10</option><option>20</option></select>
         <button class="primary" id="pGenerateBtn">번호 생성</button>
       </div>
+      <div class="group-mode-wrap">
+        <span class="group-mode-label">조 선택</span>
+        <button type="button" class="group-mode-btn active" id="pGroupAnalysis">분석 기반</button>
+        <button type="button" class="group-mode-btn" id="pGroupRandom">랜덤</button>
+        <button type="button" class="group-mode-btn" id="pGroupManual">직접 선택</button>
+        <select id="pManualGroup" style="display:none">
+          <option value="1">1조</option><option value="2">2조</option><option value="3">3조</option><option value="4">4조</option><option value="5">5조</option>
+        </select>
+      </div>
+      <div class="small" id="pGroupModeHelp" style="margin-top:7px">
+        조는 과거 조 출현 통계를 반영하고, 6자리 번호는 자리별 통계로 분석합니다.
+      </div>
       <div class="small" style="margin-top:9px">
         조(1~5)와 6자리 각 위치를 따로 점수화하고, 여러 게임을 만들 때 같은 전체번호가 반복되지 않도록 분산합니다.
       </div>
@@ -266,7 +284,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px 5px;b
         <button id="pBacktestBtn">실행</button>
       </div>
       <div id="pBacktest" class="small" style="margin-top:10px">
-        각 과거 회차 직전 데이터만 사용해 모델별 추천 5게임과 랜덤 5게임을 비교합니다. 전체번호 일치보다는 6자리 끝자리 연속 일치 수와 조 일치를 함께 봅니다.
+        각 과거 회차 직전 데이터만 사용해 모델별 추천 5게임과 랜덤 5게임을 비교합니다. 위의 조 선택 버튼은 실제 추천 생성에 적용되며, 백테스트는 기존 분석 기반 조 선택 모델과 완전 랜덤을 비교합니다.
       </div>
     </section>
 
@@ -800,6 +818,8 @@ document.querySelector('#tabPension').onclick=()=>setLotteryTab('pension');
 const PENSION_URL='https://papaya5rhw1984.github.io/lotto-data/pension.json';
 const PENSION_CACHE='pension720_draws_v6';
 let pDraws=[],pModel=null;
+let pGroupMode='analysis';
+let pManualGroupValue=1;
 
 function pLog(s){const e=document.querySelector('#pLog');e.textContent+='\\n'+s;e.scrollTop=e.scrollHeight}
 function pNormalize(j){
@@ -864,9 +884,12 @@ function pGroupScores(m,mode){
   }
   return out;
 }
-function pScoreCandidate(group,num,m,mode){
+function pScoreCandidate(group,num,m,mode,groupMode='analysis'){
   const ds=pDigitScores(m,mode),gs=pGroupScores(m,mode),digits=[...num].map(Number);
-  const stat=(gs[group-1]+digits.reduce((s,d,i)=>s+ds[i][d],0)/6)/2;
+  const digitStat=digits.reduce((s,d,i)=>s+ds[i][d],0)/6;
+  const groupStat=groupMode==='analysis'?gs[group-1]:0;
+  // 랜덤/직접 선택에서는 조의 과거 통계가 번호 점수에 영향을 주지 않음
+  const stat=groupMode==='analysis'?(groupStat+digitStat)/2:digitStat;
   const sum=digits.reduce((a,b)=>a+b,0),odd=digits.filter(x=>x%2).length;
   const counts=Array(10).fill(0);digits.forEach(d=>counts[d]++);
   const maxRep=Math.max(...counts);
@@ -876,33 +899,54 @@ function pScoreCandidate(group,num,m,mode){
   structure += maxRep<=2?.20:-.25*(maxRep-2);
   return stat*.35+structure*.65;
 }
-function pRandomCandidate(rng){
-  const group=1+Math.floor(rng()*5);
+function pRandomCandidate(rng,groupMode='analysis',manualGroup=1){
+  let group;
+  if(groupMode==='manual') group=manualGroup;
+  else group=1+Math.floor(rng()*5);
   let num='';for(let i=0;i<6;i++)num+=Math.floor(rng()*10);
   return{group,num};
 }
 function pGenerateCandidates(count,mode){
-  const rng=seeded((pModel.latest.round||1)*9277+count),seen=new Set(),cand=[];
+  const rng=seeded((pModel.latest.round||1)*9277+count+(pGroupMode==='random'?173:(pGroupMode==='manual'?911:0)));
+  const seen=new Set(),cand=[];
   const samples=Math.max(45000,count*9000);
+  const groupScores=pGroupScores(pModel,mode);
+
   for(let i=0;i<samples;i++){
-    const x=pRandomCandidate(rng),key=x.group+'-'+x.num;
+    let x=pRandomCandidate(rng,pGroupMode,pManualGroupValue);
+
+    // 분석 기반에서는 후보 조를 통계 점수에 맞춰 더 자주 탐색하도록 보정
+    if(pGroupMode==='analysis'){
+      const weights=groupScores.map(v=>Math.exp(v));
+      const sumW=weights.reduce((a,b)=>a+b,0);
+      let r=rng()*sumW,chosen=1;
+      for(let g=0;g<5;g++){r-=weights[g];if(r<=0){chosen=g+1;break}}
+      x.group=chosen;
+    }
+
+    const key=x.group+'-'+x.num;
     if(seen.has(key))continue;seen.add(key);
-    cand.push({...x,score:pScoreCandidate(x.group,x.num,pModel,mode)});
+    cand.push({...x,score:pScoreCandidate(x.group,x.num,pModel,mode,pGroupMode)});
   }
+
   cand.sort((a,b)=>b.score-a.score);
   const out=[],digitUse=Array.from({length:6},()=>Array(10).fill(0)),groupUse=Array(5).fill(0);
-  for(const x of cand){
-    const digs=[...x.num].map(Number);
-    let penalty=groupUse[x.group-1]*.18;
-    for(let p=0;p<6;p++)penalty+=digitUse[p][digs[p]]*.07;
-    const adj=x.score-penalty;
-    x.adj=adj;
-  }
-  cand.sort((a,b)=>b.adj-a.adj);
-  for(const x of cand){
-    if(out.some(y=>y.group===x.group&&y.num===x.num))continue;
-    out.push(x);groupUse[x.group-1]++;[...x.num].forEach((ch,p)=>digitUse[p][+ch]++);
-    if(out.length>=count)break;
+
+  // 묶음 분산을 고려한 순차 선택
+  while(out.length<count && cand.length){
+    let bestIdx=-1,bestAdj=-Infinity;
+    const limit=Math.min(1200,cand.length);
+    for(let i=0;i<limit;i++){
+      const x=cand[i],digs=[...x.num].map(Number);
+      let penalty=0;
+      if(pGroupMode!=='manual') penalty+=groupUse[x.group-1]*.14;
+      for(let p=0;p<6;p++) penalty+=digitUse[p][digs[p]]*.055;
+      const adj=x.score-penalty;
+      if(adj>bestAdj){bestAdj=adj;bestIdx=i}
+    }
+    if(bestIdx<0)break;
+    const [best]=cand.splice(bestIdx,1);
+    out.push(best);groupUse[best.group-1]++;[...best.num].forEach((ch,p)=>digitUse[p][+ch]++);
   }
   return out;
 }
@@ -951,7 +995,12 @@ function pGenerate(){
   if(!pModel){alert('먼저 연금 데이터를 불러오세요.');return}
   const count=+document.querySelector('#pGames').value,mode=document.querySelector('#pMode').value;
   const out=pGenerateCandidates(count,mode);
-  document.querySelector('#pRecommendations').innerHTML=out.map((x,i)=>{
+  const modeLabel=pGroupMode==='analysis'?'조 분석 기반':(pGroupMode==='random'?'조 랜덤':`${pManualGroupValue}조 고정`);
+  document.querySelector('#pRecommendations').innerHTML=
+    `<div style="padding:9px 11px;margin-bottom:8px;background:#0f141b;border:1px solid #30363d;border-radius:10px">
+      <b>${modeLabel}</b><span class="small"> · 6자리 번호는 ${document.querySelector('#pMode').selectedOptions[0].textContent} 분석</span>
+    </div>`+
+    out.map((x,i)=>{
     const digs=[...x.num].map(Number),sum=digs.reduce((a,b)=>a+b,0),odd=digs.filter(d=>d%2).length;
     return `<div class="pension-ticket"><span class="score">${i+1}위 · ${x.score.toFixed(3)}</span><br>
       ${digs.map(d=>`<span class="digit">${d}</span>`).join('')} <span class="groupbox">${x.group}조</span>
@@ -1132,6 +1181,29 @@ function pBacktest(){
 
   w.postMessage({draws:pDraws,rounds,samples});
 }
+
+function setPGroupMode(mode){
+  pGroupMode=mode;
+  document.querySelector('#pGroupAnalysis').classList.toggle('active',mode==='analysis');
+  document.querySelector('#pGroupRandom').classList.toggle('active',mode==='random');
+  document.querySelector('#pGroupManual').classList.toggle('active',mode==='manual');
+  const manual=document.querySelector('#pManualGroup');
+  manual.style.display=mode==='manual'?'inline-block':'none';
+  const help=document.querySelector('#pGroupModeHelp');
+  if(mode==='analysis')help.textContent='조는 과거 조 출현 통계를 반영하고, 6자리 번호는 자리별 통계로 분석합니다.';
+  else if(mode==='random')help.textContent='조는 1~5조 중 무작위로 선택하고, 6자리 번호만 자리별 통계로 분석합니다.';
+  else help.textContent=`${pManualGroupValue}조로 고정하고, 6자리 번호만 자리별 통계로 분석합니다.`;
+  localStorage.setItem('pension_group_mode',mode);
+}
+document.querySelector('#pGroupAnalysis').onclick=()=>setPGroupMode('analysis');
+document.querySelector('#pGroupRandom').onclick=()=>setPGroupMode('random');
+document.querySelector('#pGroupManual').onclick=()=>setPGroupMode('manual');
+document.querySelector('#pManualGroup').onchange=e=>{
+  pManualGroupValue=+e.target.value;
+  localStorage.setItem('pension_manual_group',String(pManualGroupValue));
+  if(pGroupMode==='manual')setPGroupMode('manual');
+};
+
 document.querySelector('#pLoadBtn').onclick=pLoadRemote;
 document.querySelector('#pCachedBtn').onclick=()=>pUseCached(false);
 document.querySelector('#pGenerateBtn').onclick=pGenerate;
@@ -1142,6 +1214,11 @@ document.querySelector('#pBacktestBtn').onclick=pBacktest;
 document.querySelector('#mobileGenerateBtn').onclick=()=>activeLottery==='lotto'?doGenerate():pGenerate();
 document.querySelector('#mobileLoadBtn').onclick=()=>activeLottery==='lotto'?loadRemote():pLoadRemote();
 
+try{
+  pManualGroupValue=+(localStorage.getItem('pension_manual_group')||1);
+  document.querySelector('#pManualGroup').value=String(pManualGroupValue);
+  setPGroupMode(localStorage.getItem('pension_group_mode')||'analysis');
+}catch(e){setPGroupMode('analysis')}
 try{if(localStorage.getItem(PENSION_CACHE))pUseCached(true)}catch(e){}
 try{setLotteryTab(localStorage.getItem('lottery_active_tab')||'lotto')}catch(e){setLotteryTab('lotto')}
 
